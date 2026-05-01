@@ -25,6 +25,10 @@ Dexter’s key ideas:
 7. For valuation, use an explicit DCF workflow with sensitivity analysis and sanity checks.
 8. Output concise, sourced analysis with caveats; never present investment advice as certainty.
 
+## Python interpreter convention
+
+Command examples in this skill use a bare `python`. Substitute it with whichever interpreter in the caller's environment has `tushare`, `pandas`, and `requests` installed — for example `python3`, `~/.hermes/venv/bin/python`, `~\.hermes\venv\Scripts\python.exe`, a conda env, `uv run python`, or a pyenv-managed version. The skill does not assume any specific install location and works on macOS, Linux, and Windows.
+
 ## Trigger conditions
 
 Use this skill for:
@@ -243,16 +247,16 @@ Common commands:
 
 ```bash
 # A-share dividend/quality watchlist + Markdown report source
-~/.hermes/venv/bin/python ~/.hermes/skills/research/dexter-financial-research/scripts/screen_a_share.py --preset a_dividend_quality --top 50 --report
+python ~/.hermes/skills/research/dexter-financial-research/scripts/screen_a_share.py --preset a_dividend_quality --top 50 --report
 
 # A-share value watchlist
-~/.hermes/venv/bin/python ~/.hermes/skills/research/dexter-financial-research/scripts/screen_a_share.py --preset a_value --top 50 --report
+python ~/.hermes/skills/research/dexter-financial-research/scripts/screen_a_share.py --preset a_value --top 50 --report
 
 # 港股通 watchlist only when explicitly requested
-~/.hermes/venv/bin/python ~/.hermes/skills/research/dexter-financial-research/scripts/screen_hk_connect.py --top 50 --with-momentum
+python ~/.hermes/skills/research/dexter-financial-research/scripts/screen_hk_connect.py --top 50 --with-momentum
 
 # Turn generated Markdown into the three-layer report stack
-~/.hermes/venv/bin/python ~/.hermes/skills/research/dexter-financial-research/scripts/financial_report.py report.md --title "Watchlist Report" --slug watchlist --pdf
+python ~/.hermes/skills/research/dexter-financial-research/scripts/financial_report.py report.md --title "Watchlist Report" --slug watchlist --pdf
 ```
 
 Watchlist outputs go under:
