@@ -1,6 +1,6 @@
 # Daisy Financial Research — Autonomous Stock / Company Research Skill
 
-[中文](README.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research)
+[中文](README_CN.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research)
 
 ## What it does
 
@@ -105,3 +105,39 @@ cd <skill-dir> && git pull
 ## Disclaimer
 
 This skill produces data analysis and research records, not investment advice. All conclusions require independent judgement against the latest public information.
+
+## Support
+
+If this skill helps you, consider supporting the author:
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="https://raw.githubusercontent.com/Agents365-ai/images_payment/main/qrcode/wechat-pay.png" width="180" alt="WeChat Pay">
+      <br>
+      <b>WeChat Pay</b>
+    </td>
+    <td align="center">
+      <img src="https://raw.githubusercontent.com/Agents365-ai/images_payment/main/qrcode/alipay.png" width="180" alt="Alipay">
+      <br>
+      <b>Alipay</b>
+    </td>
+    <td align="center">
+      <img src="https://raw.githubusercontent.com/Agents365-ai/images_payment/main/qrcode/buymeacoffee.png" width="180" alt="Buy Me a Coffee">
+      <br>
+      <b>Buy Me a Coffee</b>
+    </td>
+    <td align="center">
+      <img src="https://raw.githubusercontent.com/Agents365-ai/images_payment/main/awarding/award.gif" width="180" alt="Give a Reward">
+      <br>
+      <b>Give a Reward</b>
+    </td>
+  </tr>
+</table>
+
+## Author
+
+**Agents365-ai**
+
+- Bilibili: https://space.bilibili.com/441831884
+- GitHub: https://github.com/Agents365-ai
