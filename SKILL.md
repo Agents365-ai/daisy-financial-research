@@ -5,7 +5,7 @@ license: MIT
 homepage: https://github.com/Agents365-ai/daisy-financial-research
 compatibility: Requires Python 3.9+ with `tushare`, `pandas`, `requests` for screening / Tushare scripts. TUSHARE_TOKEN env var required for any Tushare call. No external CLI tools needed for the core analysis workflow.
 platforms: [macos, linux, windows]
-metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"https://space.bilibili.com/1107534197","version":"2.1.0"}
+metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"https://space.bilibili.com/1107534197","version":"2.2.0"}
 ---
 
 # Daisy Financial Research
@@ -110,6 +110,28 @@ If not using the helper, still preserve internally:
 - raw key data and transformed metrics
 - errors/empty results/permission issues
 - assumptions and interim conclusions
+
+### 1b. Pull cross-session decision memory (optional but recommended)
+
+The scratchpad is per-task. For learning across sessions and tickers, use the decision-log helper to read past calls before the plan step and to record the new call after the final answer:
+
+```bash
+# At plan step: pull recent same-ticker analyses + cross-ticker lessons
+python <this-skill-dir>/scripts/dexter_memory_log.py context --ticker 600519.SH
+
+# After final answer: record a pending decision
+python <this-skill-dir>/scripts/dexter_memory_log.py record \
+  --ticker 600519.SH --rating Buy --date 20260502 \
+  --decision "Thesis: PE22, ROE30, dividend stable, demand resilient. Plan: re-check at next earnings."
+
+# Later, when realized returns are known: resolve the pending entry
+python <this-skill-dir>/scripts/dexter_memory_log.py resolve \
+  --ticker 600519.SH --date 20260502 \
+  --raw-return 4.8 --alpha-return 1.2 --holding-days 17 \
+  --reflection "Held 17d, raw +4.8% vs CSI300 +3.6%, alpha +1.2%. Dividend+ROE thesis worked; CET1-style guardrails matter for next call."
+```
+
+Storage: a single Markdown file at `./financial-research/memory/decision-log.md`. Entries are separated by the HTML comment `<!-- ENTRY_END -->`. Tag lines start as `[YYYY-MM-DD | ticker | rating | pending]` and become `[YYYY-MM-DD | ticker | rating | +X.X% | +Y.Y% | Nd]` on resolve. `record` is idempotent on (date, ticker) — re-running with the same key skips silently. Ratings are constrained to `Buy / Overweight / Hold / Underweight / Sell`. Use `dexter_memory_log.py stats` for a hit-rate / mean-alpha summary.
 
 ### 2. Plan before tools
 

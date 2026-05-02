@@ -29,7 +29,8 @@ Renaming a script is a breaking change to the skill contract.
 
 ## Scripts
 
-- `scripts/dexter_scratchpad.py` — `init` / `add` / `show` subcommands; appends JSONL records of tool calls and results. Default output: `./financial-research/scratchpad/`.
+- `scripts/dexter_scratchpad.py` — `init` / `add` / `show` subcommands; appends JSONL records of tool calls and results. Default output: `./financial-research/scratchpad/`. Per-task only.
+- `scripts/dexter_memory_log.py` — cross-session, cross-ticker decision log. Subcommands: `record` (append pending entry, idempotent on (date, ticker)), `resolve` (replace pending tag with realized returns + append REFLECTION via atomic rewrite), `list` / `context` / `stats`. Single Markdown file at `./financial-research/memory/decision-log.md`. Format ported from `TradingAgents/tradingagents/agents/utils/memory.py`: `<!-- ENTRY_END -->` separator, tag-line `[date | ticker | rating | …]`, `DECISION:` / `REFLECTION:` body sections. Rating enum: Buy / Overweight / Hold / Underweight / Sell.
 - `scripts/financial_report.py` — copies a Markdown source to the reports dir and renders HTML; `--pdf` adds PDF (best-effort, may no-op if no HTML→PDF tool is available). Default output: `./financial-research/reports/`.
 - `scripts/hk_connect_universe.py` — `pro.hk_hold(...)` based HK Stock Connect (港股通) universe export. Searches backward when the requested date has no data. Default output: `./financial-research/universes/`.
 - `scripts/screen_a_share.py` — A-share screener with named presets (see `references/stock-screening-presets.md`); `--report` emits a Markdown source that `financial_report.py` can render. Default outputs: `./financial-research/watchlists/` (csv/json) and `./financial-research/reports/` (when `--report`).
