@@ -1,18 +1,16 @@
 ---
-name: dexter-financial-research
-description: Dexter-inspired autonomous financial research workflow for Hermes. Use when the user asks for deep stock/company/sector research, DCF or valuation, financial comparison, market-catalyst analysis, or wants an agentic finance analyst that plans, gathers data, validates, and produces a sourced answer.
-version: 1.0.0
-author: Hermes Agent, adapted from virattt/dexter key design patterns
+name: daisy-financial-research
+description: Use when user asks for stock / company / sector deep-dive research, DCF or valuation, financial comparison, market-catalyst analysis, or stock screening across A-share, Hong Kong, or US markets. Plans, gathers data via Tushare and web search, validates numbers, and produces a sourced report.
 license: MIT
-metadata:
-  hermes:
-    tags: [finance, research, stocks, valuation, dcf, tushare, agent-workflow]
-    related_skills: [tushare]
+homepage: https://github.com/Agents365-ai/daisy-financial-research
+compatibility: Requires Python 3.9+ with `tushare`, `pandas`, `requests` for screening / Tushare scripts. TUSHARE_TOKEN env var required for any Tushare call. No external CLI tools needed for the core analysis workflow.
+platforms: [macos, linux, windows]
+metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"Agents365-ai","version":"2.0.0"}
 ---
 
-# Dexter Financial Research
+# Daisy Financial Research
 
-This skill ports the useful parts of `virattt/dexter` into a Hermes skill rather than a separate TypeScript CLI agent.
+Autonomous stock / company / sector research workflow — plan, gather data, validate numbers, produce a sourced report. Inspired by the `virattt/dexter` design patterns (iterative agent loop, scratchpad, soft loop limits, numerical validation), packaged as a multi-platform skill.
 
 Dexter’s key ideas:
 
