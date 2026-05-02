@@ -37,6 +37,22 @@ Renaming a script is a breaking change to the skill contract.
 
 All scripts accept `--out-dir <root>`; subdirs are appended automatically.
 
+## Agent-native CLI contract
+
+Every script under `scripts/` shares a uniform contract enforced via `scripts/_envelope.py`:
+
+- `--format json|table` — auto-JSON when stdout is not a TTY, else table (legacy prose). Set `DAISY_FORCE_JSON=1` to force JSON regardless of TTY.
+- `--schema` — emits the script's full parameter/output/error schema as a JSON envelope. Add new params *and* update `SCHEMA` in the same script in lockstep — `--schema` is the agent's primary discovery surface, not `--help`.
+- `--dry-run` — preview the request shape; never call upstream APIs or write files. Implemented on every mutating script.
+- Exit codes: `0` ok · `1` runtime · `2` auth · `3` validation · `4` no_data · `5` dependency. Documented in each `--help` epilog.
+- Success envelope: `{"ok": true, "data": ..., "meta": {schema_version, request_id, latency_ms}}`.
+- Error envelope: `{"ok": false, "error": {code, message, retryable, context}, "meta": {...}}`.
+- `_envelope.emit_progress(event, **fields)` writes one NDJSON line to stderr — used by long-running operations (`screen_hk_connect.py --with-momentum`, `financial_report.py`) so agents can detect liveness.
+
+When adding a new script: import from `_envelope`, define a `SCHEMA` dict, call `add_common_args(parser)`, and route success/error through `emit_success` / `emit_failure`. Keep the human table render as a `table_render` callback so `--format table` users see no regression.
+
+`scripts/_envelope.py::SCHEMA_VERSION` is the contract version exposed to agents in every `meta` block. Bump it (semver) when the envelope shape changes in a way that breaks downstream parsers.
+
 ## Tushare gotchas (verified in this env)
 
 - `pro.hk_daily_basic(...)` returns `请指定正确的接口名` — treat as unavailable.

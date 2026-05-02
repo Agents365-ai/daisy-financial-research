@@ -5,7 +5,7 @@ license: MIT
 homepage: https://github.com/Agents365-ai/daisy-financial-research
 compatibility: Requires Python 3.9+ with `tushare`, `pandas`, `requests` for screening / Tushare scripts. TUSHARE_TOKEN env var required for any Tushare call. No external CLI tools needed for the core analysis workflow.
 platforms: [macos, linux, windows]
-metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"Agents365-ai","version":"2.0.0"}
+metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"https://space.bilibili.com/1107534197","version":"2.1.0"}
 ---
 
 # Daisy Financial Research
@@ -26,6 +26,25 @@ Dexter’s key ideas:
 ## Python interpreter convention
 
 Command examples in this skill use a bare `python`. Substitute it with whichever interpreter in the caller's environment has `tushare`, `pandas`, and `requests` installed — for example `python3`, `~/.hermes/venv/bin/python`, `~\.hermes\venv\Scripts\python.exe`, a conda env, `uv run python`, or a pyenv-managed version. The skill does not assume any specific install location and works on macOS, Linux, and Windows.
+
+## Agent-native CLI conventions
+
+All scripts under `scripts/` follow a uniform agent-native contract so an LLM agent can call them without parsing prose:
+
+- **Output format auto-detection.** When stdout is not a TTY (e.g. captured by `subprocess.run`), scripts emit a single JSON envelope on stdout. When stdout is a TTY, scripts emit the legacy human table. Override with `--format json|table`.
+- **Stable success envelope:** `{"ok": true, "data": {...}, "meta": {"schema_version", "request_id", "latency_ms"}}`.
+- **Stable error envelope:** `{"ok": false, "error": {"code", "message", "retryable", "context"}, "meta": {...}}`. Error messages stay on stderr in table mode.
+- **Schema introspection.** `python <this-skill-dir>/scripts/<name>.py --schema` returns parameter types, preset registries, upstream interfaces, and error codes as JSON. Agents should prefer `--schema` over parsing `--help`.
+- **Dry-run preview.** `--dry-run` echoes the request shape (would_call, would_write, filters, search_window) without making upstream API calls or writing files. Available on all mutating scripts.
+- **Documented exit codes:** `0` ok · `1` runtime · `2` auth · `3` validation · `4` no_data · `5` dependency.
+- **Long-running progress.** `screen_hk_connect.py --with-momentum` and `financial_report.py` emit NDJSON progress events on stderr (one JSON per line) so agents can detect liveness during multi-second runs.
+- **Idempotency.** Output files are date-stamped (`YYYYMMDD_*` or `YYYYMMDD-HHMMSS_*`); re-runs are deterministic and overwrite the same path.
+
+Agents calling these scripts should:
+
+1. Run `--schema` once per script to learn parameters/presets, instead of parsing `--help`.
+2. Capture stdout as JSON (auto-detected when piped) and branch on `data.ok`.
+3. Read `error.code` (not `error.message`) to decide retry vs. escalate. `retryable: true` + a `no_data` code typically means "loosen filters or extend `--lookback-days`".
 
 ## Trigger conditions
 

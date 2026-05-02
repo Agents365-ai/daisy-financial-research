@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Generate the Dexter financial research three-layer report stack.
+"""Render the daisy-financial-research three-layer report stack (Markdown + HTML + optional PDF).
 
-Inputs:
+Inputs
   - a Markdown source report
-Outputs:
-  - canonical Markdown copied under <out-dir>/reports/ (default ./financial-research/reports/, override via --out-dir <root>)
-  - styled HTML rendered from the Markdown
-  - optional PDF rendered from the Markdown via pandoc + xelatex when available
 
-The script is intentionally dependency-light: it prefers pandoc if installed and
-falls back to a small Markdown subset renderer for HTML. PDF requires pandoc and
-an installed LaTeX engine.
+Outputs (default <cwd>/financial-research/reports/)
+  - canonical Markdown copy
+  - styled HTML (pandoc when available, internal fallback otherwise)
+  - optional PDF via pandoc + xelatex/lualatex/pdflatex
+
+Agent-native conventions
+  --format json|table   stdout shape; auto-JSON when stdout is not a TTY
+  --schema              emit parameter schema, then exit
+  --dry-run             preview which files would be written, without rendering
+  Exit codes            0 ok · 1 runtime · 2 auth · 3 validation · 4 no_data · 5 dependency
 """
 
 from __future__ import annotations
@@ -26,8 +29,42 @@ import subprocess
 import sys
 from typing import Iterable
 
+from _envelope import (
+    ExitCode,
+    Timer,
+    add_common_args,
+    emit_failure,
+    emit_progress,
+    emit_schema,
+    emit_success,
+    new_request_id,
+    resolve_format,
+)
+
 DEFAULT_ROOT_NAME = "financial-research"
 SUBDIR = "reports"
+DEFAULT_CJK_FONT = "Hiragino Sans GB"
+
+SCHEMA = {
+    "name": "financial_report",
+    "description": "Render Markdown source into Markdown + HTML + optional PDF report stack",
+    "params": {
+        "markdown": {"type": "string", "required": True, "description": "Path to source Markdown file"},
+        "title": {"type": "string", "default": "first H1 or filename stem"},
+        "slug": {"type": "string", "default": "slugified title"},
+        "out_dir": {"type": "string", "default": "./financial-research", "description": "Root; reports/ subdir auto-appended"},
+        "pdf": {"type": "bool", "default": False, "description": "Attempt PDF via pandoc + LaTeX"},
+        "no_pdf": {"type": "bool", "default": False, "description": "Skip PDF even if --pdf is passed"},
+        "cjk_font": {"type": "string", "default": DEFAULT_CJK_FONT},
+    },
+    "returns": {
+        "markdown": "absolute path to copied Markdown",
+        "html": "absolute path to rendered HTML",
+        "pdf": "absolute path to rendered PDF, or null if skipped/failed",
+        "renderer": "pandoc | fallback",
+    },
+    "error_codes": ["validation_error", "no_data", "dependency_missing", "runtime_error"],
+}
 
 
 def resolve_out_dir(arg_out_dir: str | None) -> Path:
@@ -39,7 +76,7 @@ def resolve_out_dir(arg_out_dir: str | None) -> Path:
     out = root / SUBDIR
     out.mkdir(parents=True, exist_ok=True)
     return out
-DEFAULT_CJK_FONT = "Hiragino Sans GB"
+
 
 CSS = r"""
 :root {
@@ -98,7 +135,7 @@ pre { background: #101828; color: #eef4ff; padding: 1rem; border-radius: 10px; o
 
 def slugify(text: str) -> str:
     text = text.strip().lower()
-    text = re.sub(r"[^\w\u4e00-\u9fff.-]+", "-", text)
+    text = re.sub(r"[^\w一-鿿.-]+", "-", text)
     text = re.sub(r"-+", "-", text).strip("-._")
     return text or "financial-report"
 
@@ -153,7 +190,6 @@ def fallback_markdown_to_html(md: str) -> str:
             code_buf.append(line); i += 1; continue
         if not line.strip():
             close_ul(); i += 1; continue
-        # pipe table: header line + separator line
         if line.strip().startswith("|") and i + 1 < len(lines) and re.match(r"^\s*\|?\s*:?-{3,}:?", lines[i + 1]):
             close_ul()
             rows = []
@@ -176,7 +212,6 @@ def fallback_markdown_to_html(md: str) -> str:
                 out.append("<ul>"); in_ul = True
             out.append(f"<li>{html.escape(m.group(1))}</li>"); i += 1; continue
         close_ul()
-        # simple link conversion after escaping
         escaped = html.escape(line)
         escaped = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r'<a href="\2">\1</a>', escaped)
         out.append(f"<p>{escaped}</p>")
@@ -185,7 +220,7 @@ def fallback_markdown_to_html(md: str) -> str:
     return "\n".join(out)
 
 
-def render_html(md_path: Path, html_path: Path, title: str) -> tuple[bool, str]:
+def render_html(md_path: Path, html_path: Path, title: str) -> tuple[bool, str, str]:
     pandoc = shutil.which("pandoc")
     if pandoc:
         body_path = html_path.with_suffix(".body.html")
@@ -201,14 +236,13 @@ def render_html(md_path: Path, html_path: Path, title: str) -> tuple[bool, str]:
         if code == 0 and body_path.exists():
             raw = body_path.read_text(encoding="utf-8")
             body_path.unlink(missing_ok=True)
-            # Pandoc writes a full document. Inject our CSS and wrap body content lightly.
             raw = raw.replace('<link rel="stylesheet" href="__INLINE_STYLE_PLACEHOLDER__" />', f"<style>\n{CSS}\n</style>")
             raw = raw.replace('<link rel="stylesheet" href="__INLINE_STYLE_PLACEHOLDER__">', f"<style>\n{CSS}\n</style>")
             raw = re.sub(r"<body>\s*", "<body>\n<main>\n", raw, count=1)
             raw = re.sub(r"\s*</body>", "\n</main>\n</body>", raw, count=1)
             html_path.write_text(raw, encoding="utf-8")
-            return True, "html rendered with pandoc"
-        return False, f"pandoc html failed: {output.strip()}"
+            return True, "html rendered with pandoc", "pandoc"
+        return False, f"pandoc html failed: {output.strip()}", "pandoc"
 
     md = md_path.read_text(encoding="utf-8")
     body = fallback_markdown_to_html(md)
@@ -225,16 +259,16 @@ def render_html(md_path: Path, html_path: Path, title: str) -> tuple[bool, str]:
 </main></body></html>
 """
     html_path.write_text(doc, encoding="utf-8")
-    return True, "html rendered with fallback renderer"
+    return True, "html rendered with fallback renderer", "fallback"
 
 
-def render_pdf(md_path: Path, pdf_path: Path, title: str, cjk_font: str) -> tuple[bool, str]:
+def render_pdf(md_path: Path, pdf_path: Path, title: str, cjk_font: str) -> tuple[bool, str, str | None]:
     pandoc = shutil.which("pandoc")
     if not pandoc:
-        return False, "pandoc not found; skipped PDF"
+        return False, "pandoc not found; skipped PDF", None
     engine = shutil.which("xelatex") or shutil.which("lualatex") or shutil.which("pdflatex")
     if not engine:
-        return False, "LaTeX engine not found; skipped PDF"
+        return False, "LaTeX engine not found; skipped PDF", None
     cmd = [
         pandoc, str(md_path),
         "--from", "markdown+pipe_tables+yaml_metadata_block",
@@ -248,9 +282,10 @@ def render_pdf(md_path: Path, pdf_path: Path, title: str, cjk_font: str) -> tupl
         "-o", str(pdf_path),
     ]
     code, output = run(cmd)
+    engine_name = Path(engine).name
     if code == 0 and pdf_path.exists():
-        return True, f"pdf rendered with pandoc + {Path(engine).name}"
-    return False, "pdf generation failed: " + output[-1200:]
+        return True, f"pdf rendered with pandoc + {engine_name}", engine_name
+    return False, "pdf generation failed: " + output[-1200:], engine_name
 
 
 def copy_markdown(src: Path, dest: Path, title: str) -> None:
@@ -263,8 +298,11 @@ def copy_markdown(src: Path, dest: Path, title: str) -> None:
 
 
 def main(argv: Iterable[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Generate Markdown + HTML + optional PDF financial research report")
-    parser.add_argument("markdown", help="Path to source Markdown report")
+    parser = argparse.ArgumentParser(
+        description="Render Markdown + HTML + optional PDF financial research report",
+        epilog="Exit codes: 0 ok · 1 runtime · 2 auth · 3 validation · 4 no_data · 5 dependency",
+    )
+    parser.add_argument("markdown", nargs="?", help="Path to source Markdown report")
     parser.add_argument("--title", help="Report title; defaults to first H1 or file stem")
     parser.add_argument("--slug", help="Output filename slug; defaults to title slug")
     parser.add_argument("--out-dir", dest="out_dir", default=None,
@@ -272,12 +310,39 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--pdf", action="store_true", help="Attempt PDF export via pandoc + LaTeX")
     parser.add_argument("--no-pdf", action="store_true", help="Skip PDF export even if --pdf is not used")
     parser.add_argument("--cjk-font", default=DEFAULT_CJK_FONT, help="CJK font for PDF via xelatex")
+    add_common_args(parser)
     args = parser.parse_args(argv)
+
+    fmt = resolve_format(args.format)
+    timer = Timer()
+    request_id = new_request_id()
+
+    if args.schema:
+        return emit_schema(SCHEMA, fmt, timer=timer)
+
+    if not args.markdown:
+        return emit_failure(
+            ExitCode.VALIDATION,
+            "missing required argument: markdown",
+            fmt,
+            code="validation_error",
+            retryable=False,
+            context={"required": "markdown"},
+            timer=timer,
+        )
 
     src = Path(args.markdown).expanduser().resolve()
     if not src.exists():
-        print(f"ERROR: markdown file not found: {src}", file=sys.stderr)
-        return 2
+        return emit_failure(
+            ExitCode.NO_DATA,
+            f"markdown file not found: {src}",
+            fmt,
+            code="no_data",
+            retryable=False,
+            context={"path": str(src)},
+            timer=timer,
+        )
+
     md_text = src.read_text(encoding="utf-8")
     title = args.title or first_heading(md_text) or src.stem
     slug = slugify(args.slug or title)
@@ -288,28 +353,90 @@ def main(argv: Iterable[str] | None = None) -> int:
     md_out = base.with_suffix(".md")
     html_out = base.with_suffix(".html")
     pdf_out = base.with_suffix(".pdf")
+    will_render_pdf = bool(args.pdf and not args.no_pdf)
+
+    if args.dry_run:
+        return emit_success(
+            {
+                "dry_run": True,
+                "would_write": {
+                    "markdown": str(md_out),
+                    "html": str(html_out),
+                    "pdf": str(pdf_out) if will_render_pdf else None,
+                },
+                "title": title,
+                "slug": slug,
+                "pandoc_available": shutil.which("pandoc") is not None,
+                "latex_available": any(shutil.which(e) for e in ("xelatex", "lualatex", "pdflatex")),
+            },
+            fmt, timer=timer,
+            table_render=lambda: (
+                print(f"would_markdown: {md_out}"),
+                print(f"would_html: {html_out}"),
+                print(f"would_pdf: {pdf_out if will_render_pdf else 'skipped'}"),
+            ),
+        )
+
+    if fmt == "json":
+        emit_progress("start", command="financial_report.run", request_id=request_id, src=str(src))
 
     copy_markdown(src, md_out, title)
-    ok_html, msg_html = render_html(md_out, html_out, title)
+    if fmt == "json":
+        emit_progress("progress", phase="markdown", path=str(md_out))
+
+    ok_html, msg_html, html_renderer = render_html(md_out, html_out, title)
     if not ok_html:
-        print(f"ERROR: {msg_html}", file=sys.stderr)
-        return 1
+        return emit_failure(
+            ExitCode.RUNTIME,
+            msg_html,
+            fmt,
+            code="runtime_error",
+            retryable=True,
+            context={"phase": "html", "renderer": html_renderer},
+            timer=timer,
+        )
+    if fmt == "json":
+        emit_progress("progress", phase="html", path=str(html_out), renderer=html_renderer)
 
-    pdf_msg = "pdf skipped"
     pdf_ok = False
-    if args.pdf and not args.no_pdf:
-        pdf_ok, pdf_msg = render_pdf(md_out, pdf_out, title, args.cjk_font)
+    pdf_msg = "pdf skipped (pass --pdf for formal deliverable)"
+    pdf_engine: str | None = None
+    if will_render_pdf:
+        pdf_ok, pdf_msg, pdf_engine = render_pdf(md_out, pdf_out, title, args.cjk_font)
+        if fmt == "json":
+            emit_progress("progress", phase="pdf", ok=pdf_ok, path=str(pdf_out) if pdf_ok else None, engine=pdf_engine)
 
-    print(f"markdown: {md_out}")
-    print(f"html: {html_out} ({msg_html})")
-    if args.pdf:
-        if pdf_ok:
-            print(f"pdf: {pdf_out} ({pdf_msg})")
+    data = {
+        "markdown": str(md_out),
+        "html": str(html_out),
+        "html_renderer": html_renderer,
+        "pdf": str(pdf_out) if pdf_ok else None,
+        "pdf_engine": pdf_engine,
+        "pdf_skipped_reason": None if pdf_ok or not will_render_pdf else pdf_msg,
+        "title": title,
+        "slug": slug,
+    }
+
+    def table() -> None:
+        print(f"markdown: {md_out}")
+        print(f"html: {html_out} ({msg_html})")
+        if will_render_pdf:
+            if pdf_ok:
+                print(f"pdf: {pdf_out} ({pdf_msg})")
+            else:
+                print(f"pdf: skipped/failed ({pdf_msg})")
         else:
-            print(f"pdf: skipped/failed ({pdf_msg})")
-    else:
-        print("pdf: skipped (pass --pdf for formal deliverable)")
-    return 0
+            print("pdf: skipped (pass --pdf for formal deliverable)")
+
+    if will_render_pdf and not pdf_ok:
+        # Soft warning: HTML succeeded, PDF failed. Treat as success but include the reason.
+        # Agents reading data.pdf == null can detect this; humans see the table.
+        pass
+
+    if fmt == "json":
+        emit_progress("complete", request_id=request_id)
+
+    return emit_success(data, fmt, timer=timer, request_id=request_id, table_render=table)
 
 
 if __name__ == "__main__":

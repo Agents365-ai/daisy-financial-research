@@ -137,7 +137,5 @@ cd <skill-dir> && git pull
 
 ## 作者
 
-**Agents365-ai**
-
-- Bilibili: https://space.bilibili.com/441831884
+- Bilibili: https://space.bilibili.com/1107534197
 - GitHub: https://github.com/Agents365-ai
