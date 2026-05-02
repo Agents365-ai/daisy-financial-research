@@ -1,0 +1,8 @@
+# Test-only deps for the contract suite.
+# Scripts import these at module top, so tests need them to load every
+# script under scripts/ even on --help / --schema / --dry-run paths.
+# No Tushare token, no network — tests never make a Tushare call.
+pytest
+pandas
+numpy
+tushare
