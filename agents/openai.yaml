@@ -1,0 +1,19 @@
+interface:
+  display_name: "Daisy Financial Research"
+  short_description: "Autonomous stock / company / sector research with Tushare data, DCF valuation, screening, and sourced reports."
+  brand_color: "#2E7D5B"
+
+policy:
+  allow_implicit_invocation: true
+
+capabilities:
+  - Plan-then-execute research loop with scratchpad, soft loop limits, and numerical validation
+  - DCF workflow with sensitivity analysis and sanity checks
+  - Bank/financial-sector valuation (RoTE, CET1, NIM, P/B) instead of DCF
+  - A-share and Hong Kong Stock Connect screening with named presets
+  - Markdown + HTML (+ optional PDF) sourced reports under ./financial-research/
+  - Brave MCP / Bailian WebSearch MCP integration for web context
+
+prerequisites:
+  - Python 3.9+ with tushare, pandas, requests
+  - TUSHARE_TOKEN environment variable for any Tushare call
