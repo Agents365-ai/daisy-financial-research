@@ -115,7 +115,7 @@ DAISY_FORCE_JSON=1 python <skill-dir>/scripts/screen_a_share.py --preset a_value
 | 脚本 | 默认子目录 | 用途 |
 |---|---|---|
 | `dexter_scratchpad.py` | `./financial-research/scratchpad/` | 单任务 JSONL，记录工具调用/参数/结果/假设 |
-| `dexter_memory_log.py` | `./financial-research/memory/` | 跨会话决策日志，`pending → resolved` 生命周期 |
+| `dexter_memory_log.py` | `./financial-research/memory/` | 跨会话决策日志，`pending → resolved` 生命周期。v2.5.0+ 新增 `auto-resolve` 子命令，自动取价 + 取基准 + 算超额收益，一步完成解析 |
 | `financial_report.py` | `./financial-research/reports/` | Markdown → HTML → 可选 PDF 报告渲染 |
 | `screen_a_share.py` | `./financial-research/watchlists/` (`--report` 时 + `reports/`) | A 股多因子筛选 (预设驱动) |
 | `screen_hk_connect.py` | `./financial-research/watchlists/` | 港股通筛选 (仅在用户明确要求 港股通 时使用) |
@@ -126,14 +126,16 @@ DAISY_FORCE_JSON=1 python <skill-dir>/scripts/screen_a_share.py --preset a_value
 
 **Hermes 用户**: 想保留旧的 `~/.hermes/reports/financial-research/<subdir>/` 布局，给每个脚本加 `--out-dir ~/.hermes/reports/financial-research` 即可。
 
-## 测试
+## 测试与 uv 开发环境
+
+本地开发与测试推荐用 uv（更快、一个 venv 装齐所有 optional extras）：
 
 ```bash
-pip install -r requirements-test.txt
-pytest tests/ -q
+uv sync --all-extras    # tushare + akshare + yfinance + pytest 一并装好
+uv run pytest tests/    # 49 个测试，约 6 秒，无需 Tushare token，无需联网
 ```
 
-44 个测试，约 6 秒，无需 Tushare token，无需联网。锁定 agent-native envelope 契约和决策日志生命周期。CI 在 GitHub Actions 上对每个 push / PR 跑一遍，矩阵覆盖 Python 3.11/3.12。详见 `tests/README.md`。
+CI 用 pip + `requirements-test.txt` 在 Python 3.11 / 3.12 上跑（与 `pyproject.toml` 保持同步）。两条路径覆盖同一套依赖。锁定 agent-native envelope 契约、决策日志生命周期，以及新增的 `compute-returns` / `auto-resolve` 干跑 + 参数校验路径。详见 `tests/README.md`。
 
 ## 自动更新
 

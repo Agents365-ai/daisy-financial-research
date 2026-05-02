@@ -30,7 +30,7 @@ Renaming a script is a breaking change to the skill contract.
 ## Scripts
 
 - `scripts/dexter_scratchpad.py` — `init` / `add` / `show` subcommands; appends JSONL records of tool calls and results. Default output: `./financial-research/scratchpad/`. Per-task only.
-- `scripts/dexter_memory_log.py` — cross-session, cross-ticker decision log. Subcommands: `record` (append pending entry, idempotent on (date, ticker)), `resolve` (replace pending tag with realized returns + append REFLECTION via atomic rewrite), `list` / `context` / `stats`. Single Markdown file at `./financial-research/memory/decision-log.md`. Format ported from `TradingAgents/tradingagents/agents/utils/memory.py`: `<!-- ENTRY_END -->` separator, tag-line `[date | ticker | rating | …]`, `DECISION:` / `REFLECTION:` body sections. Rating enum: Buy / Overweight / Hold / Underweight / Sell.
+- `scripts/dexter_memory_log.py` — cross-session, cross-ticker decision log. Subcommands: `record` (append pending entry, idempotent on (date, ticker)), `resolve` (replace pending tag with realized returns + append REFLECTION via atomic rewrite), `list` / `context` / `stats`, plus `compute-returns` (fetch close[decision]/close[as_of]/benchmark, compute raw + alpha; no log mutation) and `auto-resolve` (compute + resolve in one call — closes the resolve loop). Benchmark routing by ticker suffix: `*.SH/SZ/BJ` → 000300.SH (CSI 300) via `pro.index_daily`; `*.HK` → HSI via `pro.index_daily` / `pro.index_global` / `pro.hk_daily` fallback chain, with AKShare `stock_hk_index_daily_sina` as final fallback (lazy-imported); US tickers → SPY via `yfinance` (lazy-imported). Single Markdown file at `./financial-research/memory/decision-log.md`. Format ported from `TradingAgents/tradingagents/agents/utils/memory.py`: `<!-- ENTRY_END -->` separator, tag-line `[date | ticker | rating | …]`, `DECISION:` / `REFLECTION:` body sections. Rating enum: Buy / Overweight / Hold / Underweight / Sell.
 - `scripts/financial_report.py` — copies a Markdown source to the reports dir and renders HTML; `--pdf` adds PDF (best-effort, may no-op if no HTML→PDF tool is available). Default output: `./financial-research/reports/`.
 - `scripts/hk_connect_universe.py` — `pro.hk_hold(...)` based HK Stock Connect (港股通) universe export. Searches backward when the requested date has no data. Default output: `./financial-research/universes/`.
 - `scripts/screen_a_share.py` — A-share screener with named presets (see `references/stock-screening-presets.md`); `--report` emits a Markdown source that `financial_report.py` can render. Default outputs: `./financial-research/watchlists/` (csv/json) and `./financial-research/reports/` (when `--report`).
@@ -55,15 +55,18 @@ When adding a new script: import from `_envelope`, define a `SCHEMA` dict, call 
 
 `scripts/_envelope.py::SCHEMA_VERSION` is the contract version exposed to agents in every `meta` block. Bump it (semver) when the envelope shape changes in a way that breaks downstream parsers.
 
-## Tests
+## Tests + uv-managed dev environment
 
-`tests/` holds the contract suite (38 tests, ~6 s, no Tushare token required, no network):
+`pyproject.toml` defines the dev/test environment; install with uv:
 
 ```bash
-python3 -m pytest tests/ -q
+uv sync --all-extras    # tushare + akshare + yfinance + pytest in one venv
+uv run pytest tests/    # 49 tests, ~6 s, no Tushare token, no network
 ```
 
-Coverage: `--help` / `--schema` / `--dry-run` invariants across all 6 scripts, validation/no_data error envelopes, `DAISY_FORCE_JSON` override, full memory-log lifecycle (record idempotency → resolve atomic rewrite → list/context/stats), on-disk format wire-compatibility with TradingAgents `memory.py`. See `tests/README.md`. Run before committing any change to `scripts/`.
+CI uses pip + `requirements-test.txt` (kept in sync with `pyproject.toml`'s required + test extras) on Python 3.11 / 3.12. Both paths resolve to the same package set.
+
+Coverage: `--help` / `--schema` / `--dry-run` invariants across all 7 scripts, validation/no_data error envelopes, `DAISY_FORCE_JSON` override, full memory-log lifecycle (record idempotency → resolve atomic rewrite → list/context/stats), on-disk format wire-compatibility with TradingAgents `memory.py`, plus the new `compute-returns` / `auto-resolve` dry-run + validation paths. See `tests/README.md`. Run before committing any change to `scripts/`.
 
 ## Tushare gotchas (verified in this env)
 

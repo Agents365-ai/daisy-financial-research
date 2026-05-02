@@ -164,3 +164,48 @@ def test_list_filter_since(run_script, out_dir):
     env = assert_success_envelope(_list(run_script, out_dir, since="20260201"))
     assert env["data"]["count"] == 1
     assert env["data"]["entries"][0]["ticker"] == "B.SH"
+
+
+# ----- compute-returns / auto-resolve dry-run paths (no network) -----
+
+def test_compute_returns_dry_run_a_share(run_script, out_dir):
+    res = run_script("dexter_memory_log.py", "compute-returns",
+                     "--ticker", "600519.SH", "--date", "20260415",
+                     "--dry-run", "--out-dir", str(out_dir))
+    env = assert_success_envelope(res)
+    assert env["data"]["dry_run"] is True
+    assert env["data"]["market"] == "a_share"
+    assert env["data"]["benchmark_ts_code"] == "000300.SH"
+
+
+def test_compute_returns_dry_run_hk(run_script, out_dir):
+    res = run_script("dexter_memory_log.py", "compute-returns",
+                     "--ticker", "00005.HK", "--date", "20260415",
+                     "--dry-run", "--out-dir", str(out_dir))
+    env = assert_success_envelope(res)
+    assert env["data"]["market"] == "hk"
+    assert env["data"]["benchmark_ts_code"] == "HSI.HK"
+
+
+def test_auto_resolve_dry_run(run_script, out_dir):
+    res = run_script("dexter_memory_log.py", "auto-resolve",
+                     "--ticker", "600519.SH", "--date", "20260415",
+                     "--reflection", "x", "--dry-run", "--out-dir", str(out_dir))
+    env = assert_success_envelope(res)
+    assert env["data"]["dry_run"] is True
+    assert env["data"]["would_resolve"] is True
+
+
+def test_compute_returns_as_of_must_be_after_decision(run_script, out_dir):
+    res = run_script("dexter_memory_log.py", "compute-returns",
+                     "--ticker", "600519.SH", "--date", "20260502",
+                     "--as-of", "20260415", "--dry-run",
+                     "--out-dir", str(out_dir))
+    assert_error_envelope(res, exit_code=3, code="validation_error")
+
+
+def test_compute_returns_bad_date(run_script, out_dir):
+    res = run_script("dexter_memory_log.py", "compute-returns",
+                     "--ticker", "600519.SH", "--date", "BANANA",
+                     "--dry-run", "--out-dir", str(out_dir))
+    assert_error_envelope(res, exit_code=3, code="validation_error")

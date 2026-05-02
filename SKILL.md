@@ -5,7 +5,7 @@ license: MIT
 homepage: https://github.com/Agents365-ai/daisy-financial-research
 compatibility: Requires Python 3.9+ with `tushare`, `pandas`, `requests` for screening / Tushare scripts. TUSHARE_TOKEN env var required for any Tushare call. No external CLI tools needed for the core analysis workflow.
 platforms: [macos, linux, windows]
-metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"https://space.bilibili.com/1107534197","version":"2.4.0"}
+metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"https://space.bilibili.com/1107534197","version":"2.5.0"}
 ---
 
 # Daisy Financial Research
@@ -124,11 +124,27 @@ python <this-skill-dir>/scripts/dexter_memory_log.py record \
   --ticker 600519.SH --rating Buy --date 20260502 \
   --decision "Thesis: PE22, ROE30, dividend stable, demand resilient. Plan: re-check at next earnings."
 
-# Later, when realized returns are known: resolve the pending entry
+# Later, when realized returns are known: resolve the pending entry.
+# Recommended path — let daisy fetch close prices and benchmark automatically:
+python <this-skill-dir>/scripts/dexter_memory_log.py auto-resolve \
+  --ticker 600519.SH --date 20260502 \
+  --reflection "Held 17d, raw +4.8% vs CSI300 +3.6%, alpha +1.2%. Dividend+ROE thesis worked."
+
+# Or if you've already computed the numbers yourself:
 python <this-skill-dir>/scripts/dexter_memory_log.py resolve \
   --ticker 600519.SH --date 20260502 \
   --raw-return 4.8 --alpha-return 1.2 --holding-days 17 \
-  --reflection "Held 17d, raw +4.8% vs CSI300 +3.6%, alpha +1.2%. Dividend+ROE thesis worked; CET1-style guardrails matter for next call."
+  --reflection "..."
+```
+
+`auto-resolve` is the recommended path. It fetches `close[decision_date]` and `close[as_of_date]` for the ticker, walks forward / backward to the nearest trading day, fetches the right benchmark by ticker suffix (CSI 300 for `*.SH/SZ/BJ`, HSI for `*.HK`, SPY for US tickers), computes raw + alpha + holding days, then runs the same atomic-rewrite resolve logic as the manual path. For HK names, when Tushare's HK index endpoints aren't available in the user's plan, the helper falls through to AKShare's `stock_hk_index_daily_sina` for HSI (requires `pip install akshare`).
+
+Use `dexter_memory_log.py compute-returns` to inspect the numbers without persisting:
+
+```bash
+python <this-skill-dir>/scripts/dexter_memory_log.py compute-returns \
+  --ticker 600519.SH --date 20260415
+# → JSON envelope with raw_return_pct / alpha_return_pct / benchmark_return_pct / holding_days
 ```
 
 When writing the `--reflection` text, follow the standard 2–4-sentence shape in `references/reflection-prompt.md` so lessons stay short enough to be re-injected on future runs.

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import os
 import re
 import statistics
 from pathlib import Path
@@ -131,8 +132,49 @@ SCHEMA = {
                 "by_rating": "dict",
             },
         },
+        "compute-returns": {
+            "description": "Fetch close[decision_date] / close[as_of_date] / benchmark and compute raw + alpha. No log mutation.",
+            "params": {
+                "ticker": {"type": "string", "required": True, "example": "600519.SH"},
+                "date": {"type": "string", "required": True, "description": "Decision date"},
+                "as_of": {"type": "string", "default": "today"},
+                "benchmark": {"type": "string", "description": "Override default benchmark ts_code"},
+            },
+            "returns": {
+                "decision_date": "YYYY-MM-DD",
+                "as_of_date": "YYYY-MM-DD",
+                "decision_close": "float",
+                "as_of_close": "float",
+                "raw_return_pct": "float",
+                "benchmark_ts_code": "string or null",
+                "benchmark_return_pct": "float or null",
+                "alpha_return_pct": "float or null",
+                "holding_days": "calendar days",
+                "data_source": "string",
+            },
+        },
+        "auto-resolve": {
+            "description": "compute-returns + resolve in one call. Closes the resolve loop.",
+            "params": {
+                "ticker": {"type": "string", "required": True},
+                "date": {"type": "string", "required": True, "description": "Decision date of the pending entry to resolve"},
+                "reflection": {"type": "string", "required": True, "description": "Lesson learned (use references/reflection-prompt.md template)"},
+                "as_of": {"type": "string", "default": "today"},
+                "benchmark": {"type": "string", "description": "Override default benchmark ts_code"},
+            },
+            "returns": {
+                "computed": "compute-returns output",
+                "updated": "bool",
+                "new_tag": "resolved tag line",
+            },
+        },
     },
-    "error_codes": ["validation_error", "no_data", "runtime_error"],
+    "benchmarks": {
+        "a_share": "000300.SH (CSI 300, via pro.index_daily)",
+        "hk": "HSI.HK (Hang Seng Index, via pro.index_global)",
+        "us": "SPY (via yfinance, optional dep)",
+    },
+    "error_codes": ["validation_error", "no_data", "runtime_error", "auth_missing", "dependency_missing"],
     "format": {
         "separator": "<!-- ENTRY_END -->",
         "tag_pending": "[YYYY-MM-DD | ticker | rating | pending]",
@@ -236,6 +278,192 @@ def parse_holding(s: str | None) -> int | None:
         return None
     m = re.match(r"^(\d+)\s*d?$", s.strip())
     return int(m.group(1)) if m else None
+
+
+# ----- market routing + close-price fetchers -----
+
+A_SHARE_RE = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")
+HK_RE = re.compile(r"^\d{4,5}\.HK$")
+
+DEFAULT_BENCHMARK = {
+    "a_share": "000300.SH",  # CSI 300
+    "hk": "HSI.HK",
+    "us": "SPY",
+}
+
+
+def detect_market(ts_code: str) -> str:
+    """Return 'a_share' / 'hk' / 'us'. Raises ValueError on unrecognized patterns."""
+    s = ts_code.strip().upper()
+    if A_SHARE_RE.match(s):
+        return "a_share"
+    if HK_RE.match(s):
+        return "hk"
+    if re.match(r"^[A-Z\.\^\-]+$", s):
+        return "us"
+    raise ValueError(
+        f"unrecognized ts_code pattern: {ts_code!r} "
+        "(expected NNNNNN.SH/SZ/BJ, NNNNN.HK, or US-style symbol like AAPL)"
+    )
+
+
+def to_iso_date(s: str) -> str:
+    """Normalize YYYYMMDD or YYYY-MM-DD to YYYY-MM-DD."""
+    return normalize_date(s)
+
+
+def to_yyyymmdd(s: str) -> str:
+    """Normalize YYYY-MM-DD to YYYYMMDD."""
+    iso = normalize_date(s)
+    return iso.replace("-", "")
+
+
+def import_tushare():
+    try:
+        import tushare as ts
+        return ts
+    except ImportError as e:
+        raise RuntimeError(f"tushare not installed: {e}") from e
+
+
+def import_yfinance():
+    try:
+        import yfinance as yf
+        return yf
+    except ImportError as e:
+        raise RuntimeError(f"yfinance not installed: {e}") from e
+
+
+def _date_window(target_iso: str, days: int, direction: str) -> tuple[str, str]:
+    """Return (start_yyyymmdd, end_yyyymmdd) for searching trading days around target.
+
+    direction='forward': window is [target, target+days]
+    direction='backward': window is [target-days, target]
+    """
+    target = dt.datetime.strptime(target_iso, "%Y-%m-%d").date()
+    if direction == "forward":
+        start, end = target, target + dt.timedelta(days=days)
+    else:
+        start, end = target - dt.timedelta(days=days), target
+    return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
+
+
+def _pick_close(df, direction: str) -> tuple[float, str] | tuple[None, None]:
+    """Pick the closest trading day's close from a Tushare df.
+
+    direction='forward' → earliest (first trading day on/after target).
+    direction='backward' → latest (last trading day on/before target).
+    Returns (close, trade_date) or (None, None).
+    """
+    if df is None or len(df) == 0:
+        return None, None
+    df = df.sort_values("trade_date", ascending=(direction == "forward"))
+    row = df.iloc[0]
+    return float(row["close"]), str(row["trade_date"])
+
+
+def fetch_tushare_close(pro, endpoint: str, ts_code: str, target_iso: str,
+                        direction: str, search_days: int = 14):
+    """Fetch close on or around target_iso from a Tushare daily endpoint.
+
+    endpoint ∈ {'daily', 'hk_daily', 'index_daily', 'index_global'}.
+    Walks forward (decision date) or backward (as-of date) by up to search_days.
+    Returns (close, trade_date_yyyymmdd) or (None, None).
+    """
+    start, end = _date_window(target_iso, search_days, direction)
+    fn = getattr(pro, endpoint)
+    try:
+        df = fn(ts_code=ts_code, start_date=start, end_date=end)
+    except Exception:
+        return None, None
+    return _pick_close(df, direction)
+
+
+def fetch_close_for_market(pro, ts_code: str, target_iso: str,
+                           direction: str, market: str | None = None):
+    """Fetch close for a stock ts_code, routing by market. Returns (close, trade_date_yyyymmdd)."""
+    market = market or detect_market(ts_code)
+    if market == "a_share":
+        return fetch_tushare_close(pro, "daily", ts_code, target_iso, direction)
+    if market == "hk":
+        return fetch_tushare_close(pro, "hk_daily", ts_code, target_iso, direction)
+    if market == "us":
+        # yfinance handles US directly; lazy import
+        return _fetch_yfinance_close(ts_code, target_iso, direction)
+    raise ValueError(f"unsupported market: {market}")
+
+
+def fetch_benchmark_close(pro, benchmark_ts_code: str, target_iso: str, direction: str):
+    """Fetch benchmark close. Tries Tushare index_daily first (A-share indexes),
+    falls back to index_global, then hk_daily, then AKShare's Sina HK index
+    daily for HSI-style codes (closes the HK benchmark gap)."""
+    for endpoint in ("index_daily", "index_global", "hk_daily"):
+        c, td = fetch_tushare_close(pro, endpoint, benchmark_ts_code, target_iso, direction)
+        if c is not None:
+            return c, td, f"tushare:pro.{endpoint}"
+
+    # Final fallback: AKShare Sina HK index daily — handles HSI when Tushare's
+    # HK index endpoints aren't available in the user's plan.
+    if "HSI" in benchmark_ts_code.upper() or "HSCEI" in benchmark_ts_code.upper():
+        c, td = _fetch_akshare_hk_index_close(benchmark_ts_code, target_iso, direction)
+        if c is not None:
+            return c, td, "akshare:stock_hk_index_daily_sina"
+    return None, None, None
+
+
+def _fetch_akshare_hk_index_close(benchmark_ts_code: str, target_iso: str,
+                                  direction: str, search_days: int = 14):
+    """AKShare Sina HK index fallback. Lazy-imported; silent if akshare absent."""
+    try:
+        import akshare as ak
+    except ImportError:
+        return None, None
+    # Strip a trailing ".HK" if present and uppercase
+    symbol = benchmark_ts_code.split(".")[0].upper()
+    try:
+        df = ak.stock_hk_index_daily_sina(symbol=symbol)
+    except Exception:
+        return None, None
+    if df is None or len(df) == 0 or "close" not in df.columns or "date" not in df.columns:
+        return None, None
+    target = dt.datetime.strptime(target_iso, "%Y-%m-%d").date()
+    # df["date"] is a Series of date strings or Timestamps
+    df = df.copy()
+    df["_d"] = df["date"].astype(str).str[:10]
+    if direction == "forward":
+        mask = df["_d"] >= target_iso
+        # earliest on or after target
+        sub = df[mask].sort_values("_d", ascending=True).head(search_days)
+    else:
+        mask = df["_d"] <= target_iso
+        sub = df[mask].sort_values("_d", ascending=False).head(search_days)
+    if len(sub) == 0:
+        return None, None
+    row = sub.iloc[0]
+    return float(row["close"]), str(row["_d"]).replace("-", "")
+
+
+def _fetch_yfinance_close(symbol: str, target_iso: str, direction: str,
+                          search_days: int = 14):
+    """yfinance fallback for US tickers and SPY benchmark."""
+    yf = import_yfinance()
+    target = dt.datetime.strptime(target_iso, "%Y-%m-%d").date()
+    if direction == "forward":
+        start, end = target, target + dt.timedelta(days=search_days)
+    else:
+        start, end = target - dt.timedelta(days=search_days), target + dt.timedelta(days=1)
+    try:
+        df = yf.download(symbol, start=start.isoformat(), end=end.isoformat(),
+                         progress=False, auto_adjust=False)
+    except Exception:
+        return None, None
+    if df is None or len(df) == 0:
+        return None, None
+    df = df.sort_index(ascending=(direction == "forward"))
+    row = df.iloc[0]
+    close = float(row["Close"]) if hasattr(row["Close"], "item") is False else float(row["Close"].iloc[0])
+    trade_date = df.index[0].strftime("%Y%m%d")
+    return close, trade_date
 
 
 # ----- subcommands -----
@@ -524,6 +752,318 @@ def cmd_stats(args, fmt, timer, request_id) -> int:
     return emit_success(data, fmt, timer=timer, request_id=request_id, table_render=table)
 
 
+# ----- compute-returns / auto-resolve -----
+
+def _compute_returns_core(args, fmt, timer, request_id):
+    """Shared logic between cmd_compute_returns and cmd_auto_resolve.
+
+    Returns (envelope_data, error_envelope_or_None). On any fatal error
+    (validation, auth, no_data, dependency), the error envelope is already
+    emitted and the second tuple member is the exit code.
+    """
+    try:
+        decision_iso = normalize_date(args.date)
+    except ValueError as e:
+        return None, emit_failure(ExitCode.VALIDATION, str(e), fmt,
+                                  code="validation_error", retryable=False,
+                                  context={"value": args.date},
+                                  timer=timer, request_id=request_id)
+
+    try:
+        as_of_iso = normalize_date(args.as_of) if args.as_of else dt.date.today().isoformat()
+    except ValueError as e:
+        return None, emit_failure(ExitCode.VALIDATION, str(e), fmt,
+                                  code="validation_error", retryable=False,
+                                  context={"value": args.as_of},
+                                  timer=timer, request_id=request_id)
+
+    if as_of_iso <= decision_iso:
+        return None, emit_failure(ExitCode.VALIDATION,
+                                  f"as_of date {as_of_iso} must be after decision date {decision_iso}",
+                                  fmt, code="validation_error", retryable=False,
+                                  context={"decision_date": decision_iso, "as_of_date": as_of_iso},
+                                  timer=timer, request_id=request_id)
+
+    try:
+        market = detect_market(args.ticker)
+    except ValueError as e:
+        return None, emit_failure(ExitCode.VALIDATION, str(e), fmt,
+                                  code="validation_error", retryable=False,
+                                  context={"ticker": args.ticker},
+                                  timer=timer, request_id=request_id)
+
+    benchmark_ts = args.benchmark or DEFAULT_BENCHMARK[market]
+
+    if args.dry_run:
+        # Short-circuit before any upstream call
+        return {
+            "dry_run": True,
+            "ticker": args.ticker,
+            "market": market,
+            "decision_date": decision_iso,
+            "as_of_date": as_of_iso,
+            "benchmark_ts_code": benchmark_ts,
+            "would_call": (
+                ["yfinance.download"] if market == "us"
+                else ["pro.daily" if market == "a_share" else "pro.hk_daily",
+                      "pro.index_daily / pro.index_global / pro.hk_daily (benchmark fallback chain)"]
+            ),
+        }, None
+
+    # Need Tushare for stock close (A-share / HK) and for benchmark
+    pro = None
+    if market in ("a_share", "hk") or benchmark_ts != "SPY":
+        token = os.environ.get("TUSHARE_TOKEN")
+        if not token:
+            try:
+                ts_mod = import_tushare()
+                token = ts_mod.get_token()
+            except RuntimeError as e:
+                return None, emit_failure(ExitCode.DEPENDENCY, str(e), fmt,
+                                          code="dependency_missing", retryable=False,
+                                          context={"required": "tushare"},
+                                          timer=timer, request_id=request_id)
+        if not token:
+            return None, emit_failure(ExitCode.AUTH, "missing TUSHARE_TOKEN",
+                                      fmt, code="auth_missing", retryable=False,
+                                      context={"env_var": "TUSHARE_TOKEN"},
+                                      timer=timer, request_id=request_id)
+        try:
+            ts_mod = import_tushare()
+        except RuntimeError as e:
+            return None, emit_failure(ExitCode.DEPENDENCY, str(e), fmt,
+                                      code="dependency_missing", retryable=False,
+                                      context={"required": "tushare"},
+                                      timer=timer, request_id=request_id)
+        pro = ts_mod.pro_api(token)
+
+    # Fetch stock closes
+    try:
+        decision_close, decision_td = fetch_close_for_market(
+            pro, args.ticker, decision_iso, "forward", market=market,
+        )
+        as_of_close, as_of_td = fetch_close_for_market(
+            pro, args.ticker, as_of_iso, "backward", market=market,
+        )
+    except RuntimeError as e:
+        return None, emit_failure(ExitCode.DEPENDENCY, str(e), fmt,
+                                  code="dependency_missing", retryable=False,
+                                  context={"ticker": args.ticker, "market": market},
+                                  timer=timer, request_id=request_id)
+
+    if decision_close is None or as_of_close is None:
+        return None, emit_failure(ExitCode.NO_DATA,
+                                  f"could not fetch closes for {args.ticker} (decision={decision_iso}, as_of={as_of_iso})",
+                                  fmt, code="no_data", retryable=True,
+                                  context={
+                                      "ticker": args.ticker,
+                                      "decision_date": decision_iso,
+                                      "as_of_date": as_of_iso,
+                                      "decision_close_found": decision_close is not None,
+                                      "as_of_close_found": as_of_close is not None,
+                                  },
+                                  timer=timer, request_id=request_id)
+
+    if decision_td == as_of_td:
+        return None, emit_failure(ExitCode.VALIDATION,
+                                  f"decision and as-of resolve to the same trading day {decision_td}; nothing to evaluate",
+                                  fmt, code="validation_error", retryable=False,
+                                  context={"trade_date": decision_td},
+                                  timer=timer, request_id=request_id)
+
+    raw_return_pct = (as_of_close / decision_close - 1) * 100
+
+    # Fetch benchmark closes (best-effort; fall through to alpha=null on failure)
+    bench_decision, bench_decision_td, bench_endpoint = None, None, None
+    bench_as_of, bench_as_of_td = None, None
+    bench_return_pct = None
+    if benchmark_ts == "SPY" and market == "us":
+        try:
+            bench_decision, bench_decision_td = _fetch_yfinance_close(benchmark_ts, decision_iso, "forward")
+            bench_as_of, bench_as_of_td = _fetch_yfinance_close(benchmark_ts, as_of_iso, "backward")
+            bench_endpoint = "yfinance"
+        except RuntimeError:
+            pass
+    else:
+        bench_decision, bench_decision_td, bench_endpoint = fetch_benchmark_close(
+            pro, benchmark_ts, decision_iso, "forward",
+        )
+        if bench_decision is not None:
+            bench_as_of, bench_as_of_td, _ = fetch_benchmark_close(
+                pro, benchmark_ts, as_of_iso, "backward",
+            )
+
+    benchmark_warning = None
+    if bench_decision is not None and bench_as_of is not None and bench_decision > 0:
+        bench_return_pct = (bench_as_of / bench_decision - 1) * 100
+    else:
+        benchmark_warning = (
+            f"could not fetch benchmark {benchmark_ts!r}; alpha not computed"
+        )
+
+    alpha_return_pct = (
+        round(raw_return_pct - bench_return_pct, 4)
+        if bench_return_pct is not None else None
+    )
+
+    holding_days = (
+        dt.datetime.strptime(as_of_iso, "%Y-%m-%d").date()
+        - dt.datetime.strptime(decision_iso, "%Y-%m-%d").date()
+    ).days
+
+    data = {
+        "ticker": args.ticker,
+        "market": market,
+        "decision_date": decision_iso,
+        "as_of_date": as_of_iso,
+        "decision_trade_date": decision_td,
+        "as_of_trade_date": as_of_td,
+        "decision_close": round(decision_close, 4),
+        "as_of_close": round(as_of_close, 4),
+        "raw_return_pct": round(raw_return_pct, 4),
+        "benchmark_ts_code": benchmark_ts,
+        "benchmark_decision_close": round(bench_decision, 4) if bench_decision is not None else None,
+        "benchmark_as_of_close": round(bench_as_of, 4) if bench_as_of is not None else None,
+        "benchmark_return_pct": round(bench_return_pct, 4) if bench_return_pct is not None else None,
+        "alpha_return_pct": alpha_return_pct,
+        "holding_days": holding_days,
+        "data_source": (
+            f"yfinance" if market == "us"
+            else f"tushare:pro.{'hk_daily' if market == 'hk' else 'daily'} + {bench_endpoint}"
+            if bench_endpoint else f"tushare:pro.{'hk_daily' if market == 'hk' else 'daily'}"
+        ),
+    }
+    if benchmark_warning:
+        data["benchmark_warning"] = benchmark_warning
+    return data, None
+
+
+def cmd_compute_returns(args, fmt, timer, request_id) -> int:
+    data, err_code = _compute_returns_core(args, fmt, timer, request_id)
+    if err_code is not None:
+        return err_code
+
+    def table() -> None:
+        print(f"ticker: {data['ticker']}  market: {data['market']}")
+        print(f"decision: {data['decision_date']} ({data['decision_trade_date']}) close={data['decision_close']}")
+        print(f"as_of:    {data['as_of_date']} ({data['as_of_trade_date']}) close={data['as_of_close']}")
+        print(f"raw_return%: {data['raw_return_pct']:+.2f}  holding_days: {data['holding_days']}")
+        if data.get("alpha_return_pct") is not None:
+            print(f"benchmark: {data['benchmark_ts_code']} return%={data['benchmark_return_pct']:+.2f} → alpha%={data['alpha_return_pct']:+.2f}")
+        elif "benchmark_warning" in data:
+            print(f"benchmark: {data.get('benchmark_warning')}")
+
+    return emit_success(data, fmt, timer=timer, request_id=request_id, table_render=table)
+
+
+def cmd_auto_resolve(args, fmt, timer, request_id) -> int:
+    """Compute returns then run the same atomic-rewrite resolve logic as cmd_resolve."""
+    data, err_code = _compute_returns_core(args, fmt, timer, request_id)
+    if err_code is not None:
+        return err_code
+
+    if args.dry_run:
+        # _compute_returns_core already short-circuited; just wrap the data
+        return emit_success(
+            {**data, "would_resolve": True},
+            fmt, timer=timer, request_id=request_id,
+            table_render=lambda: print(
+                f"would_auto_resolve: {args.ticker} {data['decision_date']} "
+                f"raw={data.get('raw_return_pct')} alpha={data.get('alpha_return_pct')}"
+            ),
+        )
+
+    # Pull computed numbers and forward to the existing resolve logic
+    if data.get("alpha_return_pct") is None:
+        return emit_failure(ExitCode.NO_DATA,
+                            f"could not compute alpha (benchmark fetch failed); "
+                            f"resolve manually with --raw-return {data['raw_return_pct']}",
+                            fmt, code="no_data", retryable=True,
+                            context={**data, "suggestion":
+                                     "Run `dexter_memory_log.py resolve --alpha-return <pct>` after fetching benchmark separately."},
+                            timer=timer, request_id=request_id)
+
+    # Reuse cmd_resolve: build a synthetic args-like namespace
+    class _A:
+        pass
+    a = _A()
+    a.ticker = args.ticker
+    a.date = args.date
+    a.raw_return = data["raw_return_pct"]
+    a.alpha_return = data["alpha_return_pct"]
+    a.holding_days = data["holding_days"]
+    a.reflection = args.reflection
+    a.log = args.log
+    a.out_dir = args.out_dir
+    a.dry_run = False  # already handled above
+
+    # cmd_resolve emits its own envelope. To return a richer combined envelope,
+    # we replicate its logic inline here. Atomic rewrite + REFLECTION append.
+    log = resolve_log_path(args.log, args.out_dir)
+    if not log.exists():
+        return emit_failure(ExitCode.NO_DATA, f"log not found: {log}",
+                            fmt, code="no_data", retryable=False,
+                            context={"path": str(log)},
+                            timer=timer, request_id=request_id)
+
+    text = read_log(log)
+    blocks = text.split(SEPARATOR)
+    decision_iso = data["decision_date"]
+    pending_prefix = f"[{decision_iso} | {args.ticker} |"
+    raw_pct = f"{data['raw_return_pct']:+.1f}%"
+    alpha_pct = f"{data['alpha_return_pct']:+.1f}%"
+
+    new_blocks: list[str] = []
+    updated = False
+    new_tag: str | None = None
+    for block in blocks:
+        s = block.strip()
+        if not updated and s:
+            lines = s.splitlines()
+            tag_line = lines[0].strip()
+            if tag_line.startswith(pending_prefix) and tag_line.endswith("| pending]"):
+                fields = [f.strip() for f in tag_line[1:-1].split("|")]
+                rating = fields[2] if len(fields) > 2 else "Hold"
+                new_tag = (
+                    f"[{decision_iso} | {args.ticker} | {rating}"
+                    f" | {raw_pct} | {alpha_pct} | {data['holding_days']}d]"
+                )
+                rest = "\n".join(lines[1:]).lstrip()
+                rebuilt = f"{new_tag}\n\n{rest}\n\nREFLECTION:\n{args.reflection.strip()}"
+                new_blocks.append(rebuilt)
+                updated = True
+                continue
+        new_blocks.append(block)
+
+    if not updated:
+        return emit_failure(ExitCode.NO_DATA,
+                            f"no pending entry found for {decision_iso} {args.ticker}",
+                            fmt, code="no_data", retryable=False,
+                            context={"decision_date": decision_iso, "ticker": args.ticker,
+                                     "path": str(log), "computed_returns": data},
+                            timer=timer, request_id=request_id)
+
+    atomic_write(log, SEPARATOR.join(new_blocks))
+
+    out = {
+        "computed": data,
+        "path": str(log),
+        "updated": True,
+        "new_tag": new_tag,
+        "raw_return_pct": data["raw_return_pct"],
+        "alpha_return_pct": data["alpha_return_pct"],
+        "holding_days": data["holding_days"],
+    }
+
+    def table() -> None:
+        print(f"resolved: {new_tag}")
+        print(f"  raw_return%={data['raw_return_pct']:+.2f}  alpha%={data['alpha_return_pct']:+.2f}  holding={data['holding_days']}d")
+        print(f"  benchmark: {data['benchmark_ts_code']} ({data['benchmark_return_pct']:+.2f}%)")
+        print(f"  log: {log}")
+
+    return emit_success(out, fmt, timer=timer, request_id=request_id, table_render=table)
+
+
 # ----- main -----
 
 def main() -> int:
@@ -574,6 +1114,24 @@ def main() -> int:
     p_stats.add_argument("--since")
     _shared(p_stats)
 
+    p_cr = sub.add_parser("compute-returns",
+                           help="Fetch close[decision]/close[as_of] + benchmark, compute raw + alpha (no log mutation)")
+    p_cr.add_argument("--ticker", required=True)
+    p_cr.add_argument("--date", required=True, help="Decision date")
+    p_cr.add_argument("--as-of", dest="as_of", default=None, help="As-of date; default today")
+    p_cr.add_argument("--benchmark", default=None, help="Override default benchmark ts_code")
+    _shared(p_cr)
+
+    p_ar = sub.add_parser("auto-resolve",
+                           help="compute-returns + resolve in one call (closes the resolve loop)")
+    p_ar.add_argument("--ticker", required=True)
+    p_ar.add_argument("--date", required=True, help="Decision date of the pending entry to resolve")
+    p_ar.add_argument("--reflection", required=True,
+                      help="Lesson learned, 2-4 sentences (see references/reflection-prompt.md)")
+    p_ar.add_argument("--as-of", dest="as_of", default=None)
+    p_ar.add_argument("--benchmark", default=None)
+    _shared(p_ar)
+
     args = p.parse_args()
     fmt = resolve_format(args.format)
     timer = Timer()
@@ -582,12 +1140,14 @@ def main() -> int:
     if args.schema:
         return emit_schema(SCHEMA, fmt, timer=timer)
 
+    valid_subs = ["record", "resolve", "list", "context", "stats",
+                  "compute-returns", "auto-resolve"]
     if not args.cmd:
         return emit_failure(
             ExitCode.VALIDATION,
-            "missing subcommand: choose one of record / resolve / list / context / stats",
+            "missing subcommand: choose one of " + " / ".join(valid_subs),
             fmt, code="validation_error", retryable=False,
-            context={"valid_subcommands": ["record", "resolve", "list", "context", "stats"]},
+            context={"valid_subcommands": valid_subs},
             timer=timer, request_id=request_id,
         )
 
@@ -602,6 +1162,10 @@ def main() -> int:
             return cmd_context(args, fmt, timer, request_id)
         if args.cmd == "stats":
             return cmd_stats(args, fmt, timer, request_id)
+        if args.cmd == "compute-returns":
+            return cmd_compute_returns(args, fmt, timer, request_id)
+        if args.cmd == "auto-resolve":
+            return cmd_auto_resolve(args, fmt, timer, request_id)
     except Exception as e:
         return emit_failure(
             ExitCode.RUNTIME, f"{type(e).__name__}: {e}",

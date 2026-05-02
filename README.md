@@ -115,7 +115,7 @@ DAISY_FORCE_JSON=1 python <skill-dir>/scripts/screen_a_share.py --preset a_value
 | Script | Default subdir | Purpose |
 |---|---|---|
 | `dexter_scratchpad.py` | `./financial-research/scratchpad/` | Per-task JSONL of tool calls, params, results, assumptions |
-| `dexter_memory_log.py` | `./financial-research/memory/` | Cross-session decision log; `pending → resolved` lifecycle |
+| `dexter_memory_log.py` | `./financial-research/memory/` | Cross-session decision log; `pending → resolved` lifecycle. Subcommands include `auto-resolve` (v2.5.0+) which fetches close prices and benchmark, computes raw + alpha, and persists the resolution in one call |
 | `financial_report.py` | `./financial-research/reports/` | Markdown → HTML → optional PDF report renderer |
 | `screen_a_share.py` | `./financial-research/watchlists/` (+ `reports/` with `--report`) | A-share multi-factor screener (presets) |
 | `screen_hk_connect.py` | `./financial-research/watchlists/` | HK Stock Connect screener (only when 港股通 explicitly requested) |
@@ -126,14 +126,16 @@ Every script accepts `--out-dir <root>` to override the root; the subdir is appe
 
 **Hermes users:** to keep the legacy `~/.hermes/reports/financial-research/<subdir>/` layout, pass `--out-dir ~/.hermes/reports/financial-research` to every script.
 
-## Tests
+## Tests + uv-managed dev environment
+
+For local development and tests, use uv (faster install + a single env with all optional extras):
 
 ```bash
-pip install -r requirements-test.txt
-pytest tests/ -q
+uv sync --all-extras    # tushare + akshare + yfinance + pytest in one venv
+uv run pytest tests/    # 49 tests, ~6 s, no Tushare token, no network
 ```
 
-44 tests, ~6 s, no Tushare token required, no network. Locks in the agent-native envelope contract and the memory-log lifecycle. CI runs the suite on every push and PR via GitHub Actions on Python 3.11/3.12. See `tests/README.md`.
+CI uses pip + `requirements-test.txt` on Python 3.11 / 3.12 (kept in sync with `pyproject.toml`). Both paths resolve to the same package set. Locks in the agent-native envelope contract, the memory-log lifecycle, and the new `compute-returns` / `auto-resolve` dry-run + validation paths. See `tests/README.md`.
 
 ## Auto-update
 

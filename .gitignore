@@ -5,3 +5,6 @@ __pycache__/
 .DS_Store
 .worktrees/
 docs/superpowers/
+# uv-managed local environment (pyproject.toml + uv.lock are tracked; .venv is not)
+.venv/
+.python-version
