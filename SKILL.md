@@ -5,7 +5,7 @@ license: MIT
 homepage: https://github.com/Agents365-ai/daisy-financial-research
 compatibility: Requires Python 3.9+ with `tushare`, `pandas`, `requests` for screening / Tushare scripts. TUSHARE_TOKEN env var required for any Tushare call. No external CLI tools needed for the core analysis workflow.
 platforms: [macos, linux, windows]
-metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"https://space.bilibili.com/1107534197","version":"2.2.0"}
+metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"https://space.bilibili.com/1107534197","version":"2.3.0"}
 ---
 
 # Daisy Financial Research
@@ -166,7 +166,17 @@ python <this-skill-dir>/scripts/hk_connect_universe.py --date YYYYMMDD --top 20
 
 - The helper searches backward when the requested date has no data and writes a CSV under `./financial-research/universes/YYYYMMDD_hk-connect-universe.csv`.
 - For 港股通 flow/capital attention, optionally use `pro.ggt_top10(...)`, `pro.ggt_daily(...)`, and `pro.moneyflow_hsgt(...)`.
-- Do not assume every advertised HK interface works in the installed Tushare version; in this environment `pro.hk_daily_basic(...)` returned `请指定正确的接口名`, so treat it as unavailable unless re-tested.
+- Do not assume every advertised HK interface works in the installed Tushare version; in this environment `pro.hk_daily_basic(...)` returned `请指定正确的接口名`, so treat it as unavailable unless re-tested. **Fallback:** when an HK valuation/fundamentals call fails on Tushare, use the bundled AKShare helper (no Tushare token, no auth):
+
+```bash
+# PE-TTM / PB / PS / PCF snapshot + Stock Connect eligibility
+python <this-skill-dir>/scripts/akshare_hk_valuation.py valuation --ts-code 00005.HK
+
+# Annual or quarterly fundamentals: ROE_YEARLY, EPS_TTM, BPS, ROA, leverage
+python <this-skill-dir>/scripts/akshare_hk_valuation.py fundamentals --ts-code 00005.HK --period 年度 --limit 8
+```
+
+Sources: AKShare `stock_hk_valuation_comparison_em` + `stock_hk_security_profile_em` for valuation; `stock_financial_hk_analysis_indicator_em` for fundamentals. Optional `pip install akshare`; the helper emits `dependency_missing` (exit=5) with a clear install hint if the package is absent.
 - For banks, DCF is usually the wrong primary valuation frame. Prefer RoTE/ROE, CET1, dividend payout/yield, NIM/NII guidance, credit cost, P/B or P/E, buyback capacity, and analyst target sanity checks.
 - Maintain the user's preferred finance-search stack: Tushare for structured market/financial data; Brave MCP as primary web search; Bailian WebSearch MCP as Chinese/China-market supplement; Python for calculations; browser only for dynamic/interactive pages. Do not include Asta/Semantic Scholar as a default route for finance evidence.
 - Session detail: see `references/hsbc-hk-bank-research-test-20260429.md` for the HSBC test workflow and pitfalls.

@@ -32,6 +32,9 @@ SCRIPTS = [
     ("hk_connect_universe.py", "tushare-mutating"),
     ("screen_a_share.py", "tushare-mutating"),
     ("screen_hk_connect.py", "tushare-mutating"),
+    # akshare is lazy-imported inside the script body, so --help / --schema /
+    # --dry-run paths don't require akshare in the test environment.
+    ("akshare_hk_valuation.py", "self-contained"),
 ]
 
 ALL_SCRIPT_NAMES = [name for name, _ in SCRIPTS]

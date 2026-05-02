@@ -87,6 +87,21 @@ def test_financial_report_dry_run(run_script, out_dir, sample_markdown):
         assert list(reports.iterdir()) == []
 
 
+def test_akshare_hk_valuation_dry_run_normalizes_ts_code(run_script):
+    """Dry-run must short-circuit before akshare import and normalize the ts_code."""
+    res = run_script("akshare_hk_valuation.py", "valuation",
+                     "--ts-code", "00005.HK", "--dry-run")
+    env = assert_success_envelope(res)
+    assert env["data"]["dry_run"] is True
+    assert env["data"]["ts_code"] == "00005", "expected .HK suffix to be stripped"
+
+
+def test_akshare_hk_valuation_bad_ts_code_returns_validation(run_script):
+    res = run_script("akshare_hk_valuation.py", "valuation",
+                     "--ts-code", "BANANA", "--dry-run")
+    assert_error_envelope(res, exit_code=3, code="validation_error")
+
+
 @pytest.mark.parametrize("script", TUSHARE_SCRIPT_NAMES)
 def test_tushare_scripts_dry_run_without_token(script, run_script, out_dir, monkeypatch):
     """Dry-run path must short-circuit before any auth check."""

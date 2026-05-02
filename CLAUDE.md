@@ -35,6 +35,7 @@ Renaming a script is a breaking change to the skill contract.
 - `scripts/hk_connect_universe.py` — `pro.hk_hold(...)` based HK Stock Connect (港股通) universe export. Searches backward when the requested date has no data. Default output: `./financial-research/universes/`.
 - `scripts/screen_a_share.py` — A-share screener with named presets (see `references/stock-screening-presets.md`); `--report` emits a Markdown source that `financial_report.py` can render. Default outputs: `./financial-research/watchlists/` (csv/json) and `./financial-research/reports/` (when `--report`).
 - `scripts/screen_hk_connect.py` — HK Stock Connect screener; only used when 港股通 is explicitly requested. Default output: `./financial-research/watchlists/`.
+- `scripts/akshare_hk_valuation.py` — HK valuation + fundamentals fallback via AKShare. Subcommands `valuation` (PE/PB/PS snapshot + Stock Connect eligibility via `stock_hk_valuation_comparison_em` + `stock_hk_security_profile_em`) and `fundamentals` (ROE/EPS/BPS/leverage time series via `stock_financial_hk_analysis_indicator_em`). No Tushare token. Closes the documented `pro.hk_daily_basic` gap. AKShare is lazy-imported, so `--help` / `--schema` / `--dry-run` work without the optional dep installed; live calls return `dependency_missing` (exit=5) when akshare is absent.
 
 All scripts accept `--out-dir <root>`; subdirs are appended automatically.
 
@@ -66,7 +67,7 @@ Coverage: `--help` / `--schema` / `--dry-run` invariants across all 6 scripts, v
 
 ## Tushare gotchas (verified in this env)
 
-- `pro.hk_daily_basic(...)` returns `请指定正确的接口名` — treat as unavailable.
+- `pro.hk_daily_basic(...)` returns `请指定正确的接口名` — treat as unavailable. Fallback: `scripts/akshare_hk_valuation.py valuation --ts-code <code>` covers PE/PB/PS snapshot; `... fundamentals --ts-code <code>` covers ROE/EPS/BPS time series.
 - `pro.hk_basic`, `pro.hk_daily`, `pro.hk_hold`, `pro.ggt_top10`, `pro.ggt_daily`, `pro.moneyflow_hsgt` are known-working.
 - Date format is `YYYYMMDD` strings (not `YYYY-MM-DD`), ts_codes are `000001.SZ` / `600000.SH` / `00005.HK`.
 
