@@ -18,7 +18,19 @@ import numpy as np
 import pandas as pd
 import tushare as ts
 
-OUT_DIR = Path(os.path.expanduser("~/.hermes/reports/financial-research/watchlists"))
+DEFAULT_ROOT_NAME = "financial-research"
+SUBDIR = "watchlists"
+
+
+def resolve_out_dir(arg_out_dir: str | None) -> Path:
+    """Return <root>/watchlists, where <root> defaults to cwd/financial-research."""
+    if arg_out_dir:
+        root = Path(arg_out_dir).expanduser()
+    else:
+        root = Path.cwd() / DEFAULT_ROOT_NAME
+    out = root / SUBDIR
+    out.mkdir(parents=True, exist_ok=True)
+    return out
 
 
 def yyyymmdd(d: dt.date) -> str:
@@ -67,6 +79,8 @@ def main() -> int:
     ap.add_argument("--top", type=int, default=50)
     ap.add_argument("--candidate-pool", type=int, default=120, help="Compute momentum for top N by holding ratio")
     ap.add_argument("--with-momentum", action="store_true", help="Fetch hk_daily to compute approx 3M return for pool")
+    ap.add_argument("--out-dir", dest="out_dir", default=None,
+                    help="Output root; default <cwd>/financial-research/ (watchlists/ subdir auto-appended)")
     args = ap.parse_args()
 
     token = os.getenv("TUSHARE_TOKEN") or ts.get_token()
@@ -100,9 +114,9 @@ def main() -> int:
     out["next_check"] = "用 Brave/Bailian 核验业绩、分红、回购、风险；对前3-8名做deep dive"
     out["source_snapshot"] = f"Tushare hk_hold/hk_daily {trade_date}"
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = resolve_out_dir(args.out_dir)
     suffix = "with_momentum" if args.with_momentum else "southbound_ratio"
-    base = OUT_DIR / f"{trade_date}_hk_connect_{suffix}"
+    base = out_dir / f"{trade_date}_hk_connect_{suffix}"
     csv_path = base.with_suffix(".csv")
     json_path = base.with_suffix(".json")
     out.to_csv(csv_path, index=False, encoding="utf-8-sig")

@@ -6,8 +6,8 @@ watchlist, not a buy list. For deep fundamental quality, follow up finalists
 with `fina_indicator`, income/balance/cashflow and news checks.
 
 Outputs:
-  ~/.hermes/reports/financial-research/watchlists/YYYYMMDD_a_share_<preset>.csv
-  ~/.hermes/reports/financial-research/watchlists/YYYYMMDD_a_share_<preset>.json
+  <out-dir>/watchlists/YYYYMMDD_a_share_<preset>.csv
+  <out-dir>/watchlists/YYYYMMDD_a_share_<preset>.json
   optional Markdown report source for financial_report.py
 """
 
@@ -24,8 +24,18 @@ import numpy as np
 import pandas as pd
 import tushare as ts
 
-OUT_DIR = Path(os.path.expanduser("~/.hermes/reports/financial-research/watchlists"))
-REPORT_DIR = Path(os.path.expanduser("~/.hermes/reports/financial-research"))
+DEFAULT_ROOT_NAME = "financial-research"
+
+
+def resolve_out_dir(arg_out_dir: str | None, subdir: str) -> Path:
+	"""Return <root>/<subdir>, where <root> defaults to cwd/financial-research."""
+	if arg_out_dir:
+		root = Path(arg_out_dir).expanduser()
+	else:
+		root = Path.cwd() / DEFAULT_ROOT_NAME
+	out = root / subdir
+	out.mkdir(parents=True, exist_ok=True)
+	return out
 
 PRESETS = {
     "a_dividend_quality": {
@@ -117,7 +127,7 @@ def reason(row) -> str:
     return "；".join(parts) or "综合因子排名靠前"
 
 
-def make_markdown(df: pd.DataFrame, args, trade_date: str, csv_path: Path) -> Path:
+def make_markdown(df: pd.DataFrame, args, trade_date: str, csv_path: Path, report_dir: Path) -> Path:
     top = df.head(args.top_report).copy()
     cols = ["rank", "ts_code", "name", "industry", "close", "pe", "pb", "dv_ttm", "total_mv", "score_total", "reason_selected", "red_flags"]
     cols = [c for c in cols if c in top.columns]
@@ -162,8 +172,7 @@ Data sources: Tushare stock_basic + daily_basic
 
 Data analysis only, not investment advice.
 """
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    path = REPORT_DIR / f"{trade_date}_a-share-{args.preset}-screen.md"
+    path = report_dir / f"{trade_date}_a-share-{args.preset}-screen.md"
     path.write_text(md, encoding="utf-8")
     return path
 
@@ -178,6 +187,8 @@ def main() -> int:
     ap.add_argument("--include-industry", action="append", help="Only include industry substring; can repeat")
     ap.add_argument("--exclude-industry", action="append", help="Exclude industry substring; can repeat")
     ap.add_argument("--report", action="store_true", help="Create Markdown report source")
+    ap.add_argument("--out-dir", dest="out_dir", default=None,
+                    help="Output root; default <cwd>/financial-research/ (watchlists/ and reports/ subdirs auto-appended)")
     args = ap.parse_args()
 
     token = os.getenv("TUSHARE_TOKEN") or ts.get_token()
@@ -228,8 +239,8 @@ def main() -> int:
     df["next_check"] = "核验财报、现金流、分红可持续性和行业风险"
     df["source_snapshot"] = f"Tushare daily_basic/stock_basic {trade_date}"
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    base = OUT_DIR / f"{trade_date}_a_share_{args.preset}"
+    watchlist_dir = resolve_out_dir(args.out_dir, "watchlists")
+    base = watchlist_dir / f"{trade_date}_a_share_{args.preset}"
     csv_path = base.with_suffix(".csv")
     json_path = base.with_suffix(".json")
     df.to_csv(csv_path, index=False, encoding="utf-8-sig")
@@ -240,7 +251,8 @@ def main() -> int:
     print(f"csv: {csv_path}")
     print(f"json: {json_path}")
     if args.report:
-        md_path = make_markdown(df, args, trade_date, csv_path)
+        report_dir = resolve_out_dir(args.out_dir, "reports")
+        md_path = make_markdown(df, args, trade_date, csv_path, report_dir)
         print(f"markdown_report_source: {md_path}")
     show_cols = ["rank", "ts_code", "name", "industry", "close", "pe", "pb", "dv_ttm", "score_total"]
     print(df[show_cols].head(min(10, len(df))).to_string(index=False))

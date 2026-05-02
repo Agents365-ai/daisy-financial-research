@@ -16,7 +16,7 @@ For finance research/search workflows, do not include Asta/Semantic Scholar as a
 
 ## Known-good HK Tushare probes
 
-Environment used: `~/.hermes/venv/bin/python`, Tushare 1.4.29, token from `TUSHARE_TOKEN`.
+Environment used: `python` (whichever interpreter has `tushare`, `pandas`, `requests` installed; see SKILL.md "Python interpreter convention"), Tushare 1.4.29, token from `TUSHARE_TOKEN`.
 
 ```python
 import os, tushare as ts
@@ -86,6 +86,6 @@ Do not default to DCF for banks. For banks, the first-pass framework should be:
 
 The test created:
 
-`~/.hermes/reports/dexter-scratchpad/20260429-162217_b2d5c91bf629.jsonl`
+`./financial-research/scratchpad/20260429-162217_b2d5c91bf629.jsonl`
 
 Use only as an example pattern; do not treat that file as canonical data in future sessions.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small JSONL scratchpad helper for Dexter-style Hermes finance research.
+"""Small JSONL scratchpad helper for Dexter-style multi-platform finance research.
 
 Usage:
   dexter_scratchpad.py init "original query"
@@ -11,12 +11,23 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-BASE_DIR = Path(os.path.expanduser("~/.hermes/reports/dexter-scratchpad"))
+DEFAULT_ROOT_NAME = "financial-research"
+SUBDIR = "scratchpad"
+
+
+def resolve_out_dir(arg_out_dir: str | None) -> Path:
+    """Return <root>/scratchpad, where <root> defaults to cwd/financial-research."""
+    if arg_out_dir:
+        root = Path(arg_out_dir).expanduser()
+    else:
+        root = Path.cwd() / DEFAULT_ROOT_NAME
+    out = root / SUBDIR
+    out.mkdir(parents=True, exist_ok=True)
+    return out
 
 
 def now_iso() -> str:
@@ -43,7 +54,8 @@ def cmd_init(args: argparse.Namespace) -> None:
     query = args.query
     h = hashlib.md5(query.encode("utf-8")).hexdigest()[:12]
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    path = BASE_DIR / f"{ts}_{h}.jsonl"
+    out_dir = resolve_out_dir(args.out_dir)
+    path = out_dir / f"{ts}_{h}.jsonl"
     append(path, {"type": "init", "timestamp": now_iso(), "query": query})
     print(path)
 
@@ -76,6 +88,8 @@ def main() -> None:
 
     p_init = sub.add_parser("init")
     p_init.add_argument("query")
+    p_init.add_argument("--out-dir", dest="out_dir", default=None,
+                        help="Output root; default <cwd>/financial-research/")
     p_init.set_defaults(func=cmd_init)
 
     p_add = sub.add_parser("add")

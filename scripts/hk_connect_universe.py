@@ -6,7 +6,7 @@ This returns Southbound Stock Connect holdings for HK stocks with fields like:
 code, trade_date, ts_code, name, vol, ratio, exchange.
 
 The script searches backward from --date until data is found, de-duplicates by
-`ts_code`, and writes a CSV under ~/.hermes/reports/financial-research/.
+`ts_code`, and writes a CSV under <out-dir>/universes/ (default ./financial-research/universes/, override via --out-dir <root>; --out can also pass a full file path).
 """
 
 from __future__ import annotations
@@ -20,7 +20,19 @@ import sys
 import pandas as pd
 import tushare as ts
 
-OUT_DIR = Path(os.path.expanduser("~/.hermes/reports/financial-research"))
+DEFAULT_ROOT_NAME = "financial-research"
+SUBDIR = "universes"
+
+
+def resolve_out_dir(arg_out_dir: str | None) -> Path:
+    """Return <root>/universes, where <root> defaults to cwd/financial-research."""
+    if arg_out_dir:
+        root = Path(arg_out_dir).expanduser()
+    else:
+        root = Path.cwd() / DEFAULT_ROOT_NAME
+    out = root / SUBDIR
+    out.mkdir(parents=True, exist_ok=True)
+    return out
 
 
 def yyyymmdd(d: dt.date) -> str:
@@ -52,7 +64,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Export Hong Kong Stock Connect universe from Tushare hk_hold")
     ap.add_argument("--date", help="Start trade date YYYYMMDD; default today, searches backward")
     ap.add_argument("--lookback-days", type=int, default=14)
-    ap.add_argument("--out", help="Output CSV path; default under ~/.hermes/reports/financial-research")
+    ap.add_argument("--out", help="Output CSV path; overrides --out-dir if given")
+    ap.add_argument("--out-dir", dest="out_dir", default=None,
+                    help="Output root; default <cwd>/financial-research/ (universes/ subdir auto-appended)")
     ap.add_argument("--top", type=int, default=0, help="Print top N rows by holding ratio; 0 prints only summary")
     args = ap.parse_args()
 
@@ -76,8 +90,12 @@ def main() -> int:
         df = df.sort_values(sort_cols, ascending=False)
     df = df.drop_duplicates("ts_code", keep="first").reset_index(drop=True)
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out = Path(args.out).expanduser() if args.out else OUT_DIR / f"{trade_date}_hk-connect-universe.csv"
+    if args.out:
+        out = Path(args.out).expanduser()
+        out.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir = resolve_out_dir(args.out_dir)
+        out = out_dir / f"{trade_date}_hk-connect-universe.csv"
     df.to_csv(out, index=False, encoding="utf-8-sig")
 
     print(f"trade_date: {trade_date}")
