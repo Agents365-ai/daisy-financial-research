@@ -126,16 +126,16 @@ Every script accepts `--out-dir <root>` to override the root; the subdir is appe
 
 **Hermes users:** to keep the legacy `~/.hermes/reports/financial-research/<subdir>/` layout, pass `--out-dir ~/.hermes/reports/financial-research` to every script.
 
-## Tests + uv-managed dev environment
+## Development with uv
 
-For local development and tests, use uv (faster install + a single env with all optional extras):
+`pyproject.toml` lists the runtime dependencies. Reproduce the env locally:
 
 ```bash
-uv sync --all-extras    # tushare + akshare + yfinance + pytest in one venv
-uv run pytest tests/    # 49 tests, ~6 s, no Tushare token, no network
+uv sync                  # core: tushare / pandas / numpy / requests
+uv sync --extra akshare  # also: akshare (HK valuation + HSI benchmark fallback)
+uv sync --extra us       # also: yfinance (US tickers in auto-resolve)
+uv sync --all-extras     # everything
 ```
-
-CI uses pip + `requirements-test.txt` on Python 3.11 / 3.12 (kept in sync with `pyproject.toml`). Both paths resolve to the same package set. Locks in the agent-native envelope contract, the memory-log lifecycle, and the new `compute-returns` / `auto-resolve` dry-run + validation paths. See `tests/README.md`.
 
 ## Auto-update
 

@@ -126,16 +126,16 @@ DAISY_FORCE_JSON=1 python <skill-dir>/scripts/screen_a_share.py --preset a_value
 
 **Hermes 用户**: 想保留旧的 `~/.hermes/reports/financial-research/<subdir>/` 布局，给每个脚本加 `--out-dir ~/.hermes/reports/financial-research` 即可。
 
-## 测试与 uv 开发环境
+## 用 uv 管理依赖
 
-本地开发与测试推荐用 uv（更快、一个 venv 装齐所有 optional extras）：
+`pyproject.toml` 列出运行时依赖，本地用 uv 复现环境：
 
 ```bash
-uv sync --all-extras    # tushare + akshare + yfinance + pytest 一并装好
-uv run pytest tests/    # 49 个测试，约 6 秒，无需 Tushare token，无需联网
+uv sync                  # 核心: tushare / pandas / numpy / requests
+uv sync --extra akshare  # 加上: akshare (港股估值 + HSI 基准回退)
+uv sync --extra us       # 加上: yfinance (auto-resolve 处理美股 ticker)
+uv sync --all-extras     # 全部装上
 ```
-
-CI 用 pip + `requirements-test.txt` 在 Python 3.11 / 3.12 上跑（与 `pyproject.toml` 保持同步）。两条路径覆盖同一套依赖。锁定 agent-native envelope 契约、决策日志生命周期，以及新增的 `compute-returns` / `auto-resolve` 干跑 + 参数校验路径。详见 `tests/README.md`。
 
 ## 自动更新
 

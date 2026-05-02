@@ -55,18 +55,16 @@ When adding a new script: import from `_envelope`, define a `SCHEMA` dict, call 
 
 `scripts/_envelope.py::SCHEMA_VERSION` is the contract version exposed to agents in every `meta` block. Bump it (semver) when the envelope shape changes in a way that breaks downstream parsers.
 
-## Tests + uv-managed dev environment
+## Tests (local-only, not in the published artifact)
 
-`pyproject.toml` defines the dev/test environment; install with uv:
+`tests/` is gitignored — the contract suite lives on disk for local development but is not part of the published skill that users `git clone` into their `.claude/skills/` (or equivalent) directory. To run it locally:
 
 ```bash
-uv sync --all-extras    # tushare + akshare + yfinance + pytest in one venv
-uv run pytest tests/    # 49 tests, ~6 s, no Tushare token, no network
+uv sync --all-extras
+uv run pytest tests/        # 49 tests, ~6 s, no Tushare token, no network
 ```
 
-CI uses pip + `requirements-test.txt` (kept in sync with `pyproject.toml`'s required + test extras) on Python 3.11 / 3.12. Both paths resolve to the same package set.
-
-Coverage: `--help` / `--schema` / `--dry-run` invariants across all 7 scripts, validation/no_data error envelopes, `DAISY_FORCE_JSON` override, full memory-log lifecycle (record idempotency → resolve atomic rewrite → list/context/stats), on-disk format wire-compatibility with TradingAgents `memory.py`, plus the new `compute-returns` / `auto-resolve` dry-run + validation paths. See `tests/README.md`. Run before committing any change to `scripts/`.
+Coverage: `--help` / `--schema` / `--dry-run` invariants across all 7 scripts, validation/no_data error envelopes, `DAISY_FORCE_JSON` override, full memory-log lifecycle (record idempotency → resolve atomic rewrite → list/context/stats), on-disk format wire-compatibility with TradingAgents `memory.py`, plus `compute-returns` / `auto-resolve` dry-run + validation paths. See `tests/README.md`. Run before committing any change to `scripts/`.
 
 ## Tushare gotchas (verified in this env)
 

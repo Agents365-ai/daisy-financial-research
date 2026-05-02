@@ -1,16 +1,13 @@
-# uv-managed environment for daisy-financial-research.
+# Runtime manifest for daisy-financial-research.
 #
 # This project is a multi-platform agent SKILL — the user-facing artifact is
 # scripts/, references/, and SKILL.md, not a Python package. The pyproject
-# below exists solely to give contributors a reproducible test/dev env via
-# `uv sync`.
+# exists so contributors can reproduce the runtime environment with uv:
 #
-# How to use:
-#   uv sync --all-extras       # install everything (tests + akshare + yfinance)
-#   uv run pytest tests/ -q    # run the contract suite
-#
-# CI installs the same deps via requirements-test.txt to keep the GitHub
-# Actions workflow simple. Both paths resolve to the same package set.
+#   uv sync                    # install runtime deps (tushare/pandas/numpy)
+#   uv sync --extra akshare    # also install AKShare HK fallback
+#   uv sync --extra us         # also install yfinance for US tickers
+#   uv sync --all-extras       # everything
 [project]
 name = "daisy-financial-research"
 version = "2.5.0"
@@ -29,8 +26,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Test dependencies — also pinned in requirements-test.txt for CI.
-test = ["pytest>=8.0"]
 # AKShare HK valuation/fundamentals fallback (akshare_hk_valuation.py)
 # and the HSI benchmark fallback for dexter_memory_log auto-resolve.
 akshare = ["akshare>=1.18"]
@@ -40,13 +35,3 @@ us = ["yfinance>=0.2"]
 [project.urls]
 Homepage = "https://github.com/Agents365-ai/daisy-financial-research"
 Repository = "https://github.com/Agents365-ai/daisy-financial-research"
-
-[tool.uv]
-# Default extras to install with `uv sync` — gives contributors the same
-# environment the skill exercises in production.
-default-groups = []
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-addopts = "-q"
