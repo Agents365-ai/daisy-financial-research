@@ -26,7 +26,19 @@ import subprocess
 import sys
 from typing import Iterable
 
-BASE_DIR = Path(os.path.expanduser("~/.hermes/reports/financial-research"))
+DEFAULT_ROOT_NAME = "financial-research"
+SUBDIR = "reports"
+
+
+def resolve_out_dir(arg_out_dir: str | None) -> Path:
+    """Return <root>/reports, where <root> defaults to cwd/financial-research."""
+    if arg_out_dir:
+        root = Path(arg_out_dir).expanduser()
+    else:
+        root = Path.cwd() / DEFAULT_ROOT_NAME
+    out = root / SUBDIR
+    out.mkdir(parents=True, exist_ok=True)
+    return out
 DEFAULT_CJK_FONT = "Hiragino Sans GB"
 
 CSS = r"""
@@ -255,7 +267,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("markdown", help="Path to source Markdown report")
     parser.add_argument("--title", help="Report title; defaults to first H1 or file stem")
     parser.add_argument("--slug", help="Output filename slug; defaults to title slug")
-    parser.add_argument("--out-dir", default=str(BASE_DIR), help="Output directory")
+    parser.add_argument("--out-dir", dest="out_dir", default=None,
+                        help="Output root; default <cwd>/financial-research/ (reports/ subdir auto-appended)")
     parser.add_argument("--pdf", action="store_true", help="Attempt PDF export via pandoc + LaTeX")
     parser.add_argument("--no-pdf", action="store_true", help="Skip PDF export even if --pdf is not used")
     parser.add_argument("--cjk-font", default=DEFAULT_CJK_FONT, help="CJK font for PDF via xelatex")
@@ -269,8 +282,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     title = args.title or first_heading(md_text) or src.stem
     slug = slugify(args.slug or title)
     timestamp = dt.datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
-    out_dir = Path(args.out_dir).expanduser().resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = resolve_out_dir(args.out_dir).resolve()
 
     base = out_dir / f"{timestamp}_{slug}"
     md_out = base.with_suffix(".md")
