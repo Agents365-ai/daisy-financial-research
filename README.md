@@ -23,26 +23,7 @@ Design borrows from `virattt/dexter` — iterative agent loop (plan → gather �
 
 ## How it works
 
-```mermaid
-flowchart LR
-    Q([Stock or sector question])
-    R([Sourced report<br/>Markdown + HTML + PDF])
-
-    subgraph Daisy["Daisy — the agent skill"]
-        direction TB
-        Plan[Plan]
-        Gather[Gather<br/>Tushare + AKShare + web search]
-        Decide[Debate / validate / decide<br/>Bull / Bear / Risk]
-        Plan --> Gather --> Decide
-    end
-
-    M[(Memory log<br/>gets smarter each call)]
-
-    Q --> Plan
-    Decide --> R
-    Decide -. records .-> M
-    M -. lessons from past calls .-> Plan
-```
+![Daisy investment research workflow](assets/daisy-workflow-en.jpg)
 
 ## Multi-Platform Support
 

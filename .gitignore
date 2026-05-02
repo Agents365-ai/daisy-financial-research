@@ -11,3 +11,5 @@ docs/superpowers/
 # Test suite kept local-only (not part of the published skill artifact)
 tests/
 .pytest_cache/
+# Diagram source SVGs kept local-only; the rendered JPGs in assets/ are tracked
+assets/*.svg

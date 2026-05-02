@@ -23,26 +23,7 @@
 
 ## 工作流程
 
-```mermaid
-flowchart LR
-    Q([股票 / 行业问题])
-    R([带来源的研究报告<br/>Markdown + HTML + PDF])
-
-    subgraph Daisy["Daisy — agent 技能"]
-        direction TB
-        Plan[制定研究计划]
-        Gather[取数据<br/>Tushare + AKShare + 网络检索]
-        Decide[多空辩论 / 校验 / 定调<br/>Bull / Bear / Risk]
-        Plan --> Gather --> Decide
-    end
-
-    M[(决策记忆库<br/>每次调用都更聪明)]
-
-    Q --> Plan
-    Decide --> R
-    Decide -. 记录决策 .-> M
-    M -. 复用历史经验 .-> Plan
-```
+![Daisy 投研智能体工作流](assets/daisy-workflow-cn.jpg)
 
 ## 多平台支持
 
