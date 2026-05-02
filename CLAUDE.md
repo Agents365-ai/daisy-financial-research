@@ -54,6 +54,16 @@ When adding a new script: import from `_envelope`, define a `SCHEMA` dict, call 
 
 `scripts/_envelope.py::SCHEMA_VERSION` is the contract version exposed to agents in every `meta` block. Bump it (semver) when the envelope shape changes in a way that breaks downstream parsers.
 
+## Tests
+
+`tests/` holds the contract suite (38 tests, ~6 s, no Tushare token required, no network):
+
+```bash
+python3 -m pytest tests/ -q
+```
+
+Coverage: `--help` / `--schema` / `--dry-run` invariants across all 6 scripts, validation/no_data error envelopes, `DAISY_FORCE_JSON` override, full memory-log lifecycle (record idempotency → resolve atomic rewrite → list/context/stats), on-disk format wire-compatibility with TradingAgents `memory.py`. See `tests/README.md`. Run before committing any change to `scripts/`.
+
 ## Tushare gotchas (verified in this env)
 
 - `pro.hk_daily_basic(...)` returns `请指定正确的接口名` — treat as unavailable.
