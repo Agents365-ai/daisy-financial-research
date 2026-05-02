@@ -2,6 +2,8 @@
 
 [English](README.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research) | [Releases](https://github.com/Agents365-ai/daisy-financial-research/releases)
 
+![Daisy 投研智能体工作流](assets/daisy-workflow-cn.jpg)
+
 ## 这是什么
 
 一个面向 AI Coding Agent 的金融研究技能 (skill)。给定股票/公司/行业话题，它会先制定研究计划，再用 Tushare 取结构化数据、用 Brave/Bailian MCP 做网络检索、用 Python 做计算与估值，最后产出带来源、可复核的 Markdown + HTML(+ PDF) 报告。
@@ -20,10 +22,6 @@
 - A 股 + 港股通预设筛选 (股息质量、价值、动量等)。
 - 三层报告输出 (md → html → 可选 pdf)，CSS 已内置中英文字体回退。
 - Brave MCP + Bailian WebSearch MCP 双通道检索。
-
-## 工作流程
-
-![Daisy 投研智能体工作流](assets/daisy-workflow-cn.jpg)
 
 ## 多平台支持
 

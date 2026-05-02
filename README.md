@@ -2,6 +2,8 @@
 
 [中文](README_CN.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research) | [Releases](https://github.com/Agents365-ai/daisy-financial-research/releases)
 
+![Daisy investment research workflow](assets/daisy-workflow-en.jpg)
+
 ## What it does
 
 A multi-platform agent skill for finance research. Given a stock/company/sector topic, it plans the research, pulls structured data from Tushare, searches the web via Brave / Bailian MCP, runs Python for math and valuation, and produces a sourced, reproducible Markdown + HTML (+ optional PDF) report.
@@ -20,10 +22,6 @@ Design borrows from `virattt/dexter` — iterative agent loop (plan → gather �
 - A-share + Hong Kong Stock Connect screening presets (dividend-quality, value, momentum, etc.).
 - Three-layer report output (md → html → optional pdf), CSS already handles CN/EN font fallback.
 - Brave MCP + Bailian WebSearch MCP for web context.
-
-## How it works
-
-![Daisy investment research workflow](assets/daisy-workflow-en.jpg)
 
 ## Multi-Platform Support
 
