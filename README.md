@@ -9,12 +9,15 @@ A multi-platform agent skill for finance research. Given a stock/company/sector 
 Design borrows from `virattt/dexter` — iterative agent loop (plan → gather → validate → answer) — but packaged as a cross-platform skill, no separate CLI.
 
 **Key capabilities:**
-- Plan-first workflow with JSONL scratchpad recording every tool call, params, result, assumption
-- DCF valuation with sensitivity matrix and sanity checks
-- Bank / financial-sector valuation override (RoTE / CET1 / NIM / P/B / payout) instead of forcing DCF on the wrong frame
-- A-share + Hong Kong Stock Connect screening presets (dividend-quality, value, momentum, etc.)
-- Three-layer report output (md → html → optional pdf), CSS already handles CN/EN font fallback
-- Brave MCP + Bailian WebSearch MCP for web context
+- **Agent-native CLI** (v2.1.0+): every script auto-emits a stable `{ok, data, meta}` JSON envelope when stdout isn't a TTY, supports `--schema` introspection and `--dry-run`, with documented exit codes 0–5.
+- **Cross-session decision memory** (v2.2.0+): append-only Markdown log with `pending → resolved` lifecycle, atomic rewrites, win-rate / mean-alpha stats. Format wire-compatible with TradingAgents' `memory.py`.
+- **AKShare HK fallback** (v2.3.0+): closes the documented `pro.hk_daily_basic` Tushare gap with PE/PB/PS snapshots and ROE/EPS/BPS time series — no Tushare token, lazy-imported.
+- Plan-first workflow with JSONL scratchpad recording every tool call, params, result, assumption.
+- DCF valuation with sensitivity matrix and sanity checks.
+- Bank / financial-sector valuation override (RoTE / CET1 / NIM / P/B / payout) instead of forcing DCF on the wrong frame.
+- A-share + Hong Kong Stock Connect screening presets (dividend-quality, value, momentum, etc.).
+- Three-layer report output (md → html → optional pdf), CSS already handles CN/EN font fallback.
+- Brave MCP + Bailian WebSearch MCP for web context.
 
 ## Multi-Platform Support
 
@@ -32,6 +35,8 @@ Design borrows from `virattt/dexter` — iterative agent loop (plan → gather �
 ```bash
 # Python 3.9+
 pip install tushare pandas requests
+# Optional: AKShare HK valuation/fundamentals fallback (no Tushare token needed)
+pip install akshare
 # Optional: PDF output
 brew install pandoc
 brew install --cask mactex      # or basictex for a smaller install
@@ -64,21 +69,71 @@ python <skill-dir>/scripts/financial_report.py ./financial-research/reports/<TIM
     --title "A-share dividend watchlist" --slug a-div-quality --pdf
 ```
 
-All output lands under `./financial-research/{reports,watchlists,scratchpad,universes}/` in your cwd by default.
+All output lands under `./financial-research/{reports,watchlists,scratchpad,universes,memory}/` in your cwd by default.
+
+## Agent-native CLI
+
+Every script under `scripts/` follows a uniform contract designed for both humans at a terminal and agents calling via subprocess. Same shape, six scripts:
+
+```bash
+# Discover the script's parameter and output schema (preferred over --help for agents)
+python <skill-dir>/scripts/screen_a_share.py --schema
+
+# Preview the request shape — no Tushare call, no file written
+python <skill-dir>/scripts/screen_a_share.py --preset a_value --dry-run
+
+# Force JSON regardless of TTY state
+DAISY_FORCE_JSON=1 python <skill-dir>/scripts/screen_a_share.py --preset a_value
+```
+
+**Output auto-detection:** when stdout is not a TTY, scripts emit a single JSON envelope. When stdout *is* a TTY, scripts emit the legacy human table. Override with `--format json|table`.
+
+**Success envelope:**
+```json
+{
+  "ok": true,
+  "data": { "trade_date": "20260430", "candidates": 50, "csv": "...", "preview": [...] },
+  "meta": { "schema_version": "1.0.0", "request_id": "req_abc123", "latency_ms": 412 }
+}
+```
+
+**Error envelope:**
+```json
+{
+  "ok": false,
+  "error": { "code": "no_data", "message": "...", "retryable": true, "context": {...} },
+  "meta": { ... }
+}
+```
+
+**Exit codes:** `0` ok · `1` runtime · `2` auth · `3` validation · `4` no_data · `5` dependency.
+
+**Long-running operations** (`screen_hk_connect.py --with-momentum`, `financial_report.py`) emit NDJSON progress events on stderr, one JSON line per phase, so an agent can detect liveness without blocking on stdout.
 
 ## Output paths
 
-| Script | Default subdir |
-|---|---|
-| `dexter_scratchpad.py` | `./financial-research/scratchpad/` |
-| `financial_report.py` | `./financial-research/reports/` |
-| `screen_a_share.py` | `./financial-research/watchlists/` (and `reports/` when `--report`) |
-| `screen_hk_connect.py` | `./financial-research/watchlists/` |
-| `hk_connect_universe.py` | `./financial-research/universes/` |
+| Script | Default subdir | Purpose |
+|---|---|---|
+| `dexter_scratchpad.py` | `./financial-research/scratchpad/` | Per-task JSONL of tool calls, params, results, assumptions |
+| `dexter_memory_log.py` | `./financial-research/memory/` | Cross-session decision log; `pending → resolved` lifecycle |
+| `financial_report.py` | `./financial-research/reports/` | Markdown → HTML → optional PDF report renderer |
+| `screen_a_share.py` | `./financial-research/watchlists/` (+ `reports/` with `--report`) | A-share multi-factor screener (presets) |
+| `screen_hk_connect.py` | `./financial-research/watchlists/` | HK Stock Connect screener (only when 港股通 explicitly requested) |
+| `hk_connect_universe.py` | `./financial-research/universes/` | Southbound Stock Connect universe export |
+| `akshare_hk_valuation.py` | (read-only) | HK PE/PB/PS + ROE/EPS via AKShare — closes `pro.hk_daily_basic` gap |
 
 Every script accepts `--out-dir <root>` to override the root; the subdir is appended automatically.
 
 **Hermes users:** to keep the legacy `~/.hermes/reports/financial-research/<subdir>/` layout, pass `--out-dir ~/.hermes/reports/financial-research` to every script.
+
+## Tests
+
+```bash
+pip install -r requirements-test.txt
+pytest tests/ -q
+```
+
+44 tests, ~6 s, no Tushare token required, no network. Locks in the agent-native envelope contract and the memory-log lifecycle. CI runs the suite on every push and PR via GitHub Actions on Python 3.11/3.12. See `tests/README.md`.
 
 ## Auto-update
 
@@ -94,13 +149,16 @@ cd <skill-dir> && git pull
 | Capability | Native agent | This skill |
 |---|---|---|
 | Plan-first + scratchpad | Sometimes | Always (JSONL on disk) |
+| Cross-session decision memory | No | Append-only Markdown log + win-rate / mean-alpha stats |
+| Agent-native CLI (JSON envelopes, schema introspection, dry-run) | Manual | Built-in for every script |
 | Numerical validation checklist | No | Yes (units / currency / period / scale) |
 | Bank valuation: skip DCF | Hit-or-miss | Default override to RoTE / CET1 / NIM / P/B |
-| Tushare routing + known-bad-interface avoidance | No | Built-in gotchas list |
+| Tushare routing + known-bad-interface avoidance | No | Built-in gotchas list + AKShare fallback for HK |
 | Multi-preset stock screening | No | Yes (`a_dividend_quality`, `a_value`, HK Connect) |
 | Three-layer report (md+html+pdf) | Manual | One command |
 | HK Connect universe export | No | Yes (with date back-fill) |
 | Soft loop limits + repeat-query detection | No | Yes (prevents runaway tool use) |
+| Bull / bear debate prompts | No | `references/debate-prompts.md` |
 
 ## Disclaimer
 

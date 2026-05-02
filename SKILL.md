@@ -287,7 +287,7 @@ Recommended report sections:
 4. Price and valuation snapshot.
 5. Financial performance and key drivers.
 6. News/catalyst review.
-7. Bull/base/bear scenarios.
+7. Bull/base/bear scenarios. For balanced single-company research, run the three-prompt debate template in `references/debate-prompts.md` (Bull → Bear → Synthesis) instead of writing scenarios free-form. The synthesis output's 5-tier rating maps directly onto `dexter_memory_log.py record --rating`.
 8. Risks and what would change the view.
 9. Evidence tables and calculations.
 10. Disclaimer: data analysis only, not investment advice.
