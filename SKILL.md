@@ -5,7 +5,7 @@ license: MIT
 homepage: https://github.com/Agents365-ai/daisy-financial-research
 compatibility: Requires Python 3.9+ with `tushare`, `pandas`, `requests` for screening / Tushare scripts. TUSHARE_TOKEN env var required for any Tushare call. No external CLI tools needed for the core analysis workflow.
 platforms: [macos, linux, windows]
-metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"https://space.bilibili.com/1107534197","version":"2.3.0"}
+metadata: {"openclaw":{"requires":{"bins":["python3"]},"emoji":"📈","os":["darwin","linux","win32"]},"hermes":{"tags":["finance","research","stocks","valuation","dcf","tushare","agent-workflow","screening"],"category":"research","related_skills":["tushare"]},"author":"https://space.bilibili.com/1107534197","version":"2.4.0"}
 ---
 
 # Daisy Financial Research
@@ -131,7 +131,9 @@ python <this-skill-dir>/scripts/dexter_memory_log.py resolve \
   --reflection "Held 17d, raw +4.8% vs CSI300 +3.6%, alpha +1.2%. Dividend+ROE thesis worked; CET1-style guardrails matter for next call."
 ```
 
-Storage: a single Markdown file at `./financial-research/memory/decision-log.md`. Entries are separated by the HTML comment `<!-- ENTRY_END -->`. Tag lines start as `[YYYY-MM-DD | ticker | rating | pending]` and become `[YYYY-MM-DD | ticker | rating | +X.X% | +Y.Y% | Nd]` on resolve. `record` is idempotent on (date, ticker) — re-running with the same key skips silently. Ratings are constrained to `Buy / Overweight / Hold / Underweight / Sell`. Use `dexter_memory_log.py stats` for a hit-rate / mean-alpha summary.
+When writing the `--reflection` text, follow the standard 2–4-sentence shape in `references/reflection-prompt.md` so lessons stay short enough to be re-injected on future runs.
+
+Storage: a single Markdown file at `./financial-research/memory/decision-log.md`. Entries are separated by the HTML comment `<!-- ENTRY_END -->`. Tag lines start as `[YYYY-MM-DD | ticker | rating | pending]` and become `[YYYY-MM-DD | ticker | rating | +X.X% | +Y.Y% | Nd]` on resolve. `record` is idempotent on (date, ticker) — re-running with the same key skips silently. Ratings are constrained to `Buy / Overweight / Hold / Underweight / Sell` (see `references/decision-schema.md` for the full rating vocabulary and report markdown contract). Use `dexter_memory_log.py stats` for a hit-rate / mean-alpha summary.
 
 ### 2. Plan before tools
 
@@ -284,10 +286,10 @@ Recommended report sections:
 1. Executive summary / investment view.
 2. Company and ticker scope.
 3. Data sources and dates.
-4. Price and valuation snapshot.
+4. Price and valuation snapshot. When the report needs a technical-analysis layer, pick up to 8 complementary indicators from `references/technical-indicator-cheatsheet.md`. Skip TA entirely for banks / insurers — RoTE / CET1 / NIM are the right frame for those.
 5. Financial performance and key drivers.
-6. News/catalyst review.
-7. Bull/base/bear scenarios. For balanced single-company research, run the three-prompt debate template in `references/debate-prompts.md` (Bull → Bear → Synthesis) instead of writing scenarios free-form. The synthesis output's 5-tier rating maps directly onto `dexter_memory_log.py record --rating`.
+6. News/catalyst review. For A-share / 港股 names, pull China-market context (涨跌停 risk, 北向资金, 板块 rotation, 监管 backdrop) using the system prompt in `references/cn-market-analyst-prompts.md`.
+7. Bull/base/bear scenarios. For balanced single-company research, run the three-prompt debate template in `references/debate-prompts.md` (Bull → Bear → Synthesis) instead of writing scenarios free-form. The synthesis output's 5-tier rating maps directly onto `dexter_memory_log.py record --rating`. For position-sizing follow-up after the directional rating is set, optionally run `references/risk-debate-prompts.md` (Aggressive → Conservative → Neutral → Portfolio Manager). All synthesis outputs use the markdown shape and rating vocabulary documented in `references/decision-schema.md`.
 8. Risks and what would change the view.
 9. Evidence tables and calculations.
 10. Disclaimer: data analysis only, not investment advice.
