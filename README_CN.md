@@ -1,6 +1,6 @@
 # Daisy 金融研究 — 自动化股票/公司研究 Agent Skill
 
-[English](README.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research)
+[English](README.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research) | [Releases](https://github.com/Agents365-ai/daisy-financial-research/releases)
 
 ## 这是什么
 
@@ -12,6 +12,8 @@
 - **Agent-native CLI** (v2.1.0+)：每个脚本在 stdout 不是 TTY 时自动输出稳定的 `{ok, data, meta}` JSON envelope，全部支持 `--schema` 内省、`--dry-run` 预演，退出码 0–5 全部明文文档化。
 - **跨会话决策记忆** (v2.2.0+)：追加式 Markdown 决策日志，`pending → resolved` 生命周期，原子化重写，胜率 / 平均超额收益统计。文件格式与 TradingAgents 的 `memory.py` 字节级兼容。
 - **AKShare 港股兜底** (v2.3.0+)：填补 daisy 在 CLAUDE.md 已记录的 Tushare gap (`pro.hk_daily_basic` 在本环境返回 `请指定正确的接口名`)，提供 PE/PB/PS 快照与 ROE/EPS/BPS 时间序列，无需 Tushare token，懒加载。
+- **Prompt 模板库** (v2.4.0+)：从 TradingAgents 借鉴的 5 份 prompt 文档 — 多空 / 多空辩论 + 综合，激进 / 保守 / 中立风险辩论，反思 prompt，决策 schema，A 股/港股市场分析框架，技术指标 cheatsheet。详见 `references/`。
+- **Auto-resolve 工作流** (v2.5.0+)：`dexter_memory_log.py auto-resolve` 自动取价（决策日 + as-of 日）+ 取对应基准（A 股 → CSI 300，港股 → HSI 经 AKShare Sina 兜底，美股 → SPY 经 yfinance），算 raw / alpha / 持仓天数，并一步完成 pending 条目的 resolve。
 - 计划先行 + JSONL scratchpad，记录每次工具调用、参数、结果、假设。
 - DCF 估值 + 敏感性矩阵 + 合理性校验。
 - 银行/金融板块估值替代框架 (RoTE / CET1 / NIM / P/B / 派息率)。
@@ -160,7 +162,10 @@ cd <skill-dir> && git pull
 | 三层报告 (md+html+pdf) | 需手写 | 一行命令产出 |
 | 港股通 universe 导出 | 否 | 是 (向后回填日期) |
 | 软循环上限 + 重复查询检测 | 否 | 是 (避免工具调用失控) |
-| 多空辩论 prompt 模板 | 否 | `references/debate-prompts.md` |
+| 多空 / 风险辩论 prompt 模板 | 否 | `references/debate-prompts.md`, `references/risk-debate-prompts.md` |
+| 决策 schema (5 档评级 + Markdown 输出契约) | 否 | `references/decision-schema.md` |
+| A 股 / 港股市场分析师 prompt | 否 | `references/cn-market-analyst-prompts.md` |
+| 自动 resolve 决策日志 (取价 + 取基准 + 算 alpha) | 否 | `dexter_memory_log.py auto-resolve` |
 
 ## 免责声明
 

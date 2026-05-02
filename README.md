@@ -1,6 +1,6 @@
 # Daisy Financial Research — Autonomous Stock / Company Research Skill
 
-[中文](README_CN.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research)
+[中文](README_CN.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research) | [Releases](https://github.com/Agents365-ai/daisy-financial-research/releases)
 
 ## What it does
 
@@ -12,6 +12,8 @@ Design borrows from `virattt/dexter` — iterative agent loop (plan → gather �
 - **Agent-native CLI** (v2.1.0+): every script auto-emits a stable `{ok, data, meta}` JSON envelope when stdout isn't a TTY, supports `--schema` introspection and `--dry-run`, with documented exit codes 0–5.
 - **Cross-session decision memory** (v2.2.0+): append-only Markdown log with `pending → resolved` lifecycle, atomic rewrites, win-rate / mean-alpha stats. Format wire-compatible with TradingAgents' `memory.py`.
 - **AKShare HK fallback** (v2.3.0+): closes the documented `pro.hk_daily_basic` Tushare gap with PE/PB/PS snapshots and ROE/EPS/BPS time series — no Tushare token, lazy-imported.
+- **Borrowed prompt library** (v2.4.0+): five reference docs adapted from TradingAgents — Bull / Bear / Synthesis debate, Aggressive / Conservative / Neutral risk debate, reflection prompt, decision schema, China-market analyst framing, technical-indicator cheatsheet. See `references/`.
+- **Auto-resolve workflow** (v2.5.0+): `dexter_memory_log.py auto-resolve` fetches `close[decision_date]` and `close[as_of_date]` for the ticker plus the right benchmark (CSI 300 for `*.SH/SZ/BJ`, HSI for `*.HK` with AKShare Sina fallback, SPY for US via yfinance), computes raw + alpha + holding days, then resolves the pending memory-log entry in one call.
 - Plan-first workflow with JSONL scratchpad recording every tool call, params, result, assumption.
 - DCF valuation with sensitivity matrix and sanity checks.
 - Bank / financial-sector valuation override (RoTE / CET1 / NIM / P/B / payout) instead of forcing DCF on the wrong frame.
@@ -160,7 +162,10 @@ cd <skill-dir> && git pull
 | Three-layer report (md+html+pdf) | Manual | One command |
 | HK Connect universe export | No | Yes (with date back-fill) |
 | Soft loop limits + repeat-query detection | No | Yes (prevents runaway tool use) |
-| Bull / bear debate prompts | No | `references/debate-prompts.md` |
+| Bull / bear / risk debate prompts | No | `references/debate-prompts.md`, `references/risk-debate-prompts.md` |
+| Decision schema (5-tier rating + markdown render contract) | No | `references/decision-schema.md` |
+| China-market analyst framing | No | `references/cn-market-analyst-prompts.md` |
+| Auto-resolve memory log (fetch close + benchmark, compute alpha) | No | `dexter_memory_log.py auto-resolve` |
 
 ## Disclaimer
 
