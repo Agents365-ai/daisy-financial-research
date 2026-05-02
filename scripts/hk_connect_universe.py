@@ -6,7 +6,7 @@ This returns Southbound Stock Connect holdings for HK stocks with fields like:
 code, trade_date, ts_code, name, vol, ratio, exchange.
 
 The script searches backward from --date until data is found, de-duplicates by
-`ts_code`, and writes a CSV under ~/.hermes/reports/financial-research/.
+`ts_code`, and writes a CSV under <out-dir>/universes/ (default ./financial-research/universes/, override via --out-dir <root>; --out can also pass a full file path).
 """
 
 from __future__ import annotations

@@ -6,8 +6,8 @@ watchlist, not a buy list. For deep fundamental quality, follow up finalists
 with `fina_indicator`, income/balance/cashflow and news checks.
 
 Outputs:
-  ~/.hermes/reports/financial-research/watchlists/YYYYMMDD_a_share_<preset>.csv
-  ~/.hermes/reports/financial-research/watchlists/YYYYMMDD_a_share_<preset>.json
+  <out-dir>/watchlists/YYYYMMDD_a_share_<preset>.csv
+  <out-dir>/watchlists/YYYYMMDD_a_share_<preset>.json
   optional Markdown report source for financial_report.py
 """
 

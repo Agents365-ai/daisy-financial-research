@@ -4,7 +4,7 @@
 Inputs:
   - a Markdown source report
 Outputs:
-  - canonical Markdown copied under ~/.hermes/reports/financial-research/
+  - canonical Markdown copied under <out-dir>/reports/ (default ./financial-research/reports/, override via --out-dir <root>)
   - styled HTML rendered from the Markdown
   - optional PDF rendered from the Markdown via pandoc + xelatex when available
 
