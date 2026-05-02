@@ -21,83 +21,27 @@ Design borrows from `virattt/dexter` — iterative agent loop (plan → gather �
 - Three-layer report output (md → html → optional pdf), CSS already handles CN/EN font fallback.
 - Brave MCP + Bailian WebSearch MCP for web context.
 
-## Architecture
+## How it works
 
 ```mermaid
-flowchart TD
-    subgraph DriverGroup["DRIVER"]
-        Driver["External LLM agent<br/>not a Daisy component"]
-        Loop["Iterative loop<br/>plan -> gather -> validate -> record"]
+flowchart LR
+    Q([Stock or sector question])
+    R([Sourced report<br/>Markdown + HTML + PDF])
+
+    subgraph Daisy["Daisy — the agent skill"]
+        direction TB
+        Plan[Plan]
+        Gather[Gather<br/>Tushare + AKShare + web search]
+        Decide[Debate / validate / decide<br/>Bull / Bear / Risk]
+        Plan --> Gather --> Decide
     end
 
-    subgraph DaisyGroup["DAISY SKILL SUPPLIES"]
-        Skill["SKILL.md<br/>workflow contract"]
-        Scripts["scripts/<br/>agent-native CLI tools<br/>{ok,data,meta} JSON<br/>--schema --dry-run<br/>exit codes 0-5"]
-        Refs["references/<br/>Markdown prompt templates"]
-    end
+    M[(Memory log<br/>gets smarter each call)]
 
-    subgraph ScriptGroup["SCRIPT CAPABILITIES"]
-        Scratch["per-task scratchpad<br/>JSONL"]
-        Memory["cross-session memory log<br/>record / resolve / list / context / stats<br/>compute-returns / auto-resolve"]
-        Screen["A-share and HK screeners<br/>HK Connect universe"]
-        Valuation["HK valuation fallback"]
-        Render["report renderer<br/>Markdown to HTML to PDF"]
-    end
-
-    subgraph RefGroup["REFERENCE PROMPTS"]
-        Debate["debate and risk-debate prompts"]
-        Reflect["reflection prompt"]
-        Decision["decision schema<br/>5-tier rating"]
-        Market["CN market analyst prompts<br/>technical indicator cheatsheet"]
-    end
-
-    subgraph DataGroup["DATA SOURCES"]
-        Tushare["Tushare Pro API<br/>TUSHARE_TOKEN"]
-        AKShare["AKShare<br/>no token, lazy-import"]
-        Web["Brave / Bailian MCP<br/>web search"]
-        YF["yfinance<br/>US, lazy-import"]
-    end
-
-    subgraph OutputGroup["OUTPUTS<br/>./financial-research/"]
-        OutScratch["scratchpad/"]
-        OutMemory["memory/"]
-        OutLists["watchlists/<br/>universes/"]
-        OutReports["reports/"]
-    end
-
-    Driver -->|reads| Skill
-    Driver -->|uses prompts| Refs
-    Driver --> Loop
-    Loop -->|invokes| Scripts
-
-    Refs --> Debate
-    Refs --> Reflect
-    Refs --> Decision
-    Refs --> Market
-
-    Scripts --> Scratch
-    Scripts --> Memory
-    Scripts --> Screen
-    Scripts --> Valuation
-    Scripts --> Render
-
-    Screen -->|calls| Tushare
-    Screen -->|calls| AKShare
-    Valuation -->|calls| AKShare
-    Loop -->|searches| Web
-    Loop -->|US data| YF
-
-    Tushare -->|structured data| OutLists
-    AKShare -->|structured data| OutLists
-    Web -->|evidence| OutScratch
-    YF -->|market data| OutScratch
-    Scratch -->|writes| OutScratch
-    Memory -->|records decisions| OutMemory
-    Render -->|publishes| OutReports
-
-    OutMemory -->|auto-resolve context on next task| Memory
-    Memory -->|feeds prior decisions| Loop
-    Loop -->|record on exit| Memory
+    Q --> Plan
+    Decide --> R
+    Decide -. records .-> M
+    M -. lessons from past calls .-> Plan
 ```
 
 ## Multi-Platform Support
