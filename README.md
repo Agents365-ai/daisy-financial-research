@@ -1,107 +1,107 @@
-# Daisy 金融研究 — 自动化股票/公司研究 Agent Skill
+# Daisy Financial Research — Autonomous Stock / Company Research Skill
 
-[English](README_EN.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research)
+[中文](README.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research)
 
-## 这是什么
+## What it does
 
-一个面向 AI Coding Agent 的金融研究技能 (skill)。给定股票/公司/行业话题，它会先制定研究计划，再用 Tushare 取结构化数据、用 Brave/Bailian MCP 做网络检索、用 Python 做计算与估值，最后产出带来源、可复核的 Markdown + HTML(+ PDF) 报告。
+A multi-platform agent skill for finance research. Given a stock/company/sector topic, it plans the research, pulls structured data from Tushare, searches the web via Brave / Bailian MCP, runs Python for math and valuation, and produces a sourced, reproducible Markdown + HTML (+ optional PDF) report.
 
-设计参照 `virattt/dexter` 的迭代式 agent 循环 (plan → gather → validate → answer)，但作为一个跨平台 skill 打包，无需独立 CLI。
+Design borrows from `virattt/dexter` — iterative agent loop (plan → gather → validate → answer) — but packaged as a cross-platform skill, no separate CLI.
 
-**关键能力:**
-- 计划先行 + JSONL scratchpad，记录每次工具调用、参数、结果、假设
-- DCF 估值 + 敏感性矩阵 + 合理性校验
-- 银行/金融板块估值替代框架 (RoTE / CET1 / NIM / P/B / 派息率)
-- A 股 + 港股通预设筛选 (股息质量、价值、动量等)
-- 三层报告输出 (md → html → 可选 pdf)，CSS 已内置中英文字体回退
-- Brave MCP + Bailian WebSearch MCP 双通道检索
+**Key capabilities:**
+- Plan-first workflow with JSONL scratchpad recording every tool call, params, result, assumption
+- DCF valuation with sensitivity matrix and sanity checks
+- Bank / financial-sector valuation override (RoTE / CET1 / NIM / P/B / payout) instead of forcing DCF on the wrong frame
+- A-share + Hong Kong Stock Connect screening presets (dividend-quality, value, momentum, etc.)
+- Three-layer report output (md → html → optional pdf), CSS already handles CN/EN font fallback
+- Brave MCP + Bailian WebSearch MCP for web context
 
-## 多平台支持
+## Multi-Platform Support
 
-| 平台 | 状态 | 说明 |
+| Platform | Status | Notes |
 |---|---|---|
-| **Claude Code** | ✅ | 原生 SKILL.md 格式 |
-| **Opencode** | ✅ | 自动读取 `~/.claude/skills/` |
-| **OpenClaw / ClawHub** | ✅ | `metadata.openclaw` 命名空间，依赖检查 |
-| **Hermes Agent** | ✅ | `metadata.hermes` 命名空间 |
-| **OpenAI Codex** | ✅ | `agents/openai.yaml` sidecar |
-| **SkillsMP** | ✅ | GitHub topic 已配置 |
+| **Claude Code** | ✅ Full | Native SKILL.md format |
+| **Opencode** | ✅ Full | Reads `~/.claude/skills/` automatically |
+| **OpenClaw / ClawHub** | ✅ Full | `metadata.openclaw` namespace, dependency gating |
+| **Hermes Agent** | ✅ Full | `metadata.hermes` namespace |
+| **OpenAI Codex** | ✅ Full | `agents/openai.yaml` sidecar |
+| **SkillsMP** | ✅ Indexed | GitHub topics configured |
 
-## 前置依赖
+## Prerequisites
 
 ```bash
 # Python 3.9+
 pip install tushare pandas requests
-# 可选: PDF 输出
+# Optional: PDF output
 brew install pandoc
-brew install --cask mactex   # 或 brew install --cask basictex (体积小)
+brew install --cask mactex      # or basictex for a smaller install
 ```
 
-环境变量:
+Environment:
 ```bash
-export TUSHARE_TOKEN=xxxxxxxx   # 任何 Tushare 调用都需要
+export TUSHARE_TOKEN=xxxxxxxx   # required for any Tushare call
 ```
 
-## 安装
+## Installation
 
-| 平台 | 全局 | 项目级 |
+| Platform | Global | Project |
 |---|---|---|
 | Claude Code | `git clone https://github.com/Agents365-ai/daisy-financial-research.git ~/.claude/skills/daisy-financial-research` | `git clone ... .claude/skills/daisy-financial-research` |
 | Opencode | `git clone ... ~/.config/opencode/skills/daisy-financial-research` | `git clone ... .opencode/skills/daisy-financial-research` |
-| OpenClaw | `clawhub install daisy-financial-research` 或 `git clone ... ~/.openclaw/skills/daisy-financial-research` | `git clone ... skills/daisy-financial-research` |
-| Hermes | `git clone ... ~/.hermes/skills/research/daisy-financial-research` | 通过 `~/.hermes/config.yaml` 的 `external_dirs` |
+| OpenClaw | `clawhub install daisy-financial-research` or `git clone ... ~/.openclaw/skills/daisy-financial-research` | `git clone ... skills/daisy-financial-research` |
+| Hermes | `git clone ... ~/.hermes/skills/research/daisy-financial-research` | via `external_dirs` in `~/.hermes/config.yaml` |
 | OpenAI Codex | `git clone ... ~/.agents/skills/daisy-financial-research` | `git clone ... .agents/skills/daisy-financial-research` |
 | SkillsMP | `skills install daisy-financial-research` | — |
 
-## 快速开始
+## Quick Start
 
 ```bash
-# A 股股息质量 watchlist + Markdown 报告草稿
+# A-share dividend-quality watchlist + Markdown report draft
 python <skill-dir>/scripts/screen_a_share.py --preset a_dividend_quality --top 50 --report
 
-# 把 Markdown 草稿渲染成三层报告
+# Render the Markdown draft into the three-layer report
 python <skill-dir>/scripts/financial_report.py ./financial-research/reports/<TIMESTAMP>_a-share-a_dividend_quality-screen.md \
-    --title "A股股息 watchlist" --slug a-div-quality --pdf
+    --title "A-share dividend watchlist" --slug a-div-quality --pdf
 ```
 
-默认输出全部落到当前目录下的 `./financial-research/{reports,watchlists,scratchpad,universes}/` 里。
+All output lands under `./financial-research/{reports,watchlists,scratchpad,universes}/` in your cwd by default.
 
-## 输出路径
+## Output paths
 
-| 脚本 | 默认子目录 |
+| Script | Default subdir |
 |---|---|
 | `dexter_scratchpad.py` | `./financial-research/scratchpad/` |
 | `financial_report.py` | `./financial-research/reports/` |
-| `screen_a_share.py` | `./financial-research/watchlists/` (+ `reports/` 如果 `--report`) |
+| `screen_a_share.py` | `./financial-research/watchlists/` (and `reports/` when `--report`) |
 | `screen_hk_connect.py` | `./financial-research/watchlists/` |
 | `hk_connect_universe.py` | `./financial-research/universes/` |
 
-任何脚本都接受 `--out-dir <root>` 来自定义根目录，子目录会自动追加。
+Every script accepts `--out-dir <root>` to override the root; the subdir is appended automatically.
 
-**Hermes 用户**: 想保留旧的 `~/.hermes/reports/financial-research/<subdir>/` 布局，给每个脚本加 `--out-dir ~/.hermes/reports/financial-research` 即可。
+**Hermes users:** to keep the legacy `~/.hermes/reports/financial-research/<subdir>/` layout, pass `--out-dir ~/.hermes/reports/financial-research` to every script.
 
-## 自动更新
+## Auto-update
 
-技能会在每次会话首次调用时检查 `<skill-dir>/.last_update`。超过 24 小时则静默 `git pull --ff-only`。失败 (离线/冲突/非 git checkout) 不会打断流程，也不会通知用户。
+The skill checks `<skill-dir>/.last_update` on first use per conversation. If older than 24 hours, it silently runs `git pull --ff-only`. Failures (offline, conflict, not a git checkout) are ignored without interrupting the workflow.
 
-手动更新:
+Manual update:
 ```bash
 cd <skill-dir> && git pull
 ```
 
-## 与无 skill 的对比
+## vs no skill
 
-| 能力 | 原生 agent | 本 skill |
+| Capability | Native agent | This skill |
 |---|---|---|
-| 计划先行 + scratchpad | 否 | 是 (强制 JSONL 记录) |
-| 数值校验 checklist | 否 | 是 (单位/币种/期间/口径) |
-| 银行估值不用 DCF | 看运气 | 默认强制改用 RoTE/CET1/NIM/P/B |
-| Tushare 路由 + 已知失败接口规避 | 否 | 是 (内置 gotchas) |
-| 多预设股票筛选 | 否 | 是 (`a_dividend_quality` / `a_value` / 港股通) |
-| 三层报告 (md+html+pdf) | 需手写 | 一行命令产出 |
-| 港股通 universe 导出 | 否 | 是 (向后回填日期) |
-| 软循环上限 + 重复查询检测 | 否 | 是 (避免工具调用失控) |
+| Plan-first + scratchpad | Sometimes | Always (JSONL on disk) |
+| Numerical validation checklist | No | Yes (units / currency / period / scale) |
+| Bank valuation: skip DCF | Hit-or-miss | Default override to RoTE / CET1 / NIM / P/B |
+| Tushare routing + known-bad-interface avoidance | No | Built-in gotchas list |
+| Multi-preset stock screening | No | Yes (`a_dividend_quality`, `a_value`, HK Connect) |
+| Three-layer report (md+html+pdf) | Manual | One command |
+| HK Connect universe export | No | Yes (with date back-fill) |
+| Soft loop limits + repeat-query detection | No | Yes (prevents runaway tool use) |
 
-## 免责声明
+## Disclaimer
 
-本技能仅用于数据分析与研究记录，不构成投资建议。所有结论需结合最新公开信息独立判断。
+This skill produces data analysis and research records, not investment advice. All conclusions require independent judgement against the latest public information.
