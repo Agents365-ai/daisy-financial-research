@@ -123,7 +123,7 @@ For Hong Kong stocks:
 python <this-skill-dir>/scripts/hk_connect_universe.py --date YYYYMMDD --top 20
 ```
 
-- The helper searches backward when the requested date has no data and writes a CSV under `./financial-research/reports/YYYYMMDD_hk-connect-universe.csv`.
+- The helper searches backward when the requested date has no data and writes a CSV under `./financial-research/universes/YYYYMMDD_hk-connect-universe.csv`.
 - For 港股通 flow/capital attention, optionally use `pro.ggt_top10(...)`, `pro.ggt_daily(...)`, and `pro.moneyflow_hsgt(...)`.
 - Do not assume every advertised HK interface works in the installed Tushare version; in this environment `pro.hk_daily_basic(...)` returned `请指定正确的接口名`, so treat it as unavailable unless re-tested.
 - For banks, DCF is usually the wrong primary valuation frame. Prefer RoTE/ROE, CET1, dividend payout/yield, NIM/NII guidance, credit cost, P/B or P/E, buyback capacity, and analyst target sanity checks.

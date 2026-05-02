@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small JSONL scratchpad helper for Dexter-style Hermes finance research.
+"""Small JSONL scratchpad helper for Dexter-style multi-platform finance research.
 
 Usage:
   dexter_scratchpad.py init "original query"
