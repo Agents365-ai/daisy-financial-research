@@ -25,6 +25,7 @@ import argparse
 import hashlib
 import json
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -425,6 +426,134 @@ def _append_pad(pad: Path, record: dict):
         return ExitCode.RUNTIME
 
 
+@dataclass
+class _Turn:
+    speaker: str
+    round: int
+    turn: int
+    argument: str
+
+
+@dataclass
+class _State:
+    init: dict
+    turns: list
+    synthesized: bool
+
+    @property
+    def debate_type(self) -> str:
+        return self.init["debate_type"]
+
+    @property
+    def max_rounds(self) -> int:
+        return self.init["max_rounds"]
+
+    @property
+    def bound(self) -> int:
+        return len(ROTATION[self.debate_type]) * self.max_rounds
+
+    def round_for_turn(self, turn_idx: int) -> int:
+        return (turn_idx - 1) // len(ROTATION[self.debate_type]) + 1
+
+
+def _load_pad_records(pad: Path):
+    """Returns (records, error). On failure, records is None and error is a (exit_code, code, ctx) tuple."""
+    if not pad.exists():
+        return [], None
+    records = []
+    for i, line in enumerate(pad.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            return None, (ExitCode.RUNTIME, "pad_corrupted",
+                          {"path": str(pad), "line_number": i})
+    return records, None
+
+
+def _replay_state(pad: Path, debate_id: str):
+    records, err = _load_pad_records(pad)
+    if err is not None:
+        return None, err
+    inits = [r for r in records if r.get("type") == "debate_init"
+             and r.get("debate_id") == debate_id]
+    if len(inits) == 0:
+        return None, (ExitCode.VALIDATION, "debate_id_not_found",
+                      {"debate_id": debate_id, "path": str(pad)})
+    if len(inits) > 1:
+        return None, (ExitCode.VALIDATION, "debate_id_duplicate",
+                      {"debate_id": debate_id, "count": len(inits)})
+    init = inits[0]
+    debate_type = init["debate_type"]
+    rotation = ROTATION[debate_type]
+
+    turns_raw = sorted(
+        (r for r in records
+         if r.get("type") == "debate_turn" and r.get("debate_id") == debate_id),
+        key=lambda r: r["turn"],
+    )
+    expected_turn = 1
+    for r in turns_raw:
+        if r["turn"] != expected_turn:
+            return None, (ExitCode.VALIDATION, "debate_state_corrupted", {
+                "debate_id": debate_id,
+                "at_turn": expected_turn,
+                "expected_speaker": rotation[(expected_turn - 1) % len(rotation)],
+                "actual_speaker": None,
+                "rotation_rule": f"{debate_type}: " + ", ".join(rotation) + ", ...",
+                "reason": "missing turn",
+            })
+        expected_speaker = rotation[(r["turn"] - 1) % len(rotation)]
+        if r["speaker"] != expected_speaker:
+            return None, (ExitCode.VALIDATION, "debate_state_corrupted", {
+                "debate_id": debate_id,
+                "at_turn": r["turn"],
+                "expected_speaker": expected_speaker,
+                "actual_speaker": r["speaker"],
+                "rotation_rule": f"{debate_type}: " + ", ".join(rotation) + ", ...",
+            })
+        expected_turn += 1
+
+    turns = [_Turn(speaker=r["speaker"], round=r["round"], turn=r["turn"],
+                   argument=r["argument"]) for r in turns_raw]
+    synthesized = any(r.get("type") == "debate_synthesis"
+                      and r.get("debate_id") == debate_id for r in records)
+    return _State(init=init, turns=turns, synthesized=synthesized), None
+
+
+def _build_speaker_vars_for_speaker_turn(state: _State, ctx: dict, speaker: str) -> dict:
+    """Variable bag for rendering a per-turn speaker prompt."""
+    vars_ = dict(ctx)
+    vars_["ticker"] = state.init["ticker"]
+    if state.debate_type == "risk":
+        prior_path = state.init.get("prior_synthesis_file_path")
+        if prior_path:
+            try:
+                vars_["prior_synthesis"] = _read_text_file(Path(prior_path))
+            except OSError:
+                vars_["prior_synthesis"] = "_(not provided)_"
+
+    last_by_role = {}
+    for t in state.turns:
+        last_by_role[t.speaker] = t.argument
+
+    if state.debate_type == "research":
+        if speaker == "Bear":
+            vars_["bull_argument"] = last_by_role.get("Bull", "_(not yet spoken)_")
+    elif state.debate_type == "risk":
+        if speaker == "Aggressive":
+            vars_["conservative_response"] = last_by_role.get("Conservative", "_(not yet spoken)_")
+            vars_["neutral_response"] = last_by_role.get("Neutral", "_(not yet spoken)_")
+        elif speaker == "Conservative":
+            vars_["aggressive_response"] = last_by_role.get("Aggressive", "_(not yet spoken)_")
+            vars_["neutral_response"] = last_by_role.get("Neutral", "_(not yet spoken)_")
+        elif speaker == "Neutral":
+            vars_["aggressive_response"] = last_by_role.get("Aggressive", "_(not yet spoken)_")
+            vars_["conservative_response"] = last_by_role.get("Conservative", "_(not yet spoken)_")
+    return vars_
+
+
 def _build_parser() -> argparse.ArgumentParser:
     epilog = (
         "Exit codes: 0 ok | 1 runtime | 2 auth (unused) | 3 validation | "
@@ -542,7 +671,90 @@ def _cmd_init(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
 
 
 def _cmd_next(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
-    raise NotImplementedError("Task 5")
+    pad = Path(args.pad)
+
+    arg_path = Path(args.argument_file)
+    if not arg_path.exists():
+        return emit_failure(ExitCode.VALIDATION, "argument file missing", fmt,
+                            code="argument_file_missing",
+                            context={"path": str(arg_path)}, timer=timer)
+    arg_text = _read_text_file(arg_path)
+    if not arg_text.strip():
+        return emit_failure(ExitCode.VALIDATION, "argument file is whitespace-only", fmt,
+                            code="argument_empty",
+                            context={"path": str(arg_path)}, timer=timer)
+
+    state, err = _replay_state(pad, args.debate_id)
+    if err is not None:
+        exit_code, code, ctx = err
+        return emit_failure(exit_code, code.replace("_", " "), fmt,
+                            code=code, context=ctx, timer=timer)
+    if state.synthesized:
+        return emit_failure(ExitCode.VALIDATION, "debate already synthesized", fmt,
+                            code="debate_already_synthesized",
+                            context={"debate_id": args.debate_id}, timer=timer)
+
+    rotation = ROTATION[state.debate_type]
+    just_spoke_turn = len(state.turns) + 1
+    just_spoke_speaker = rotation[(just_spoke_turn - 1) % len(rotation)]
+    just_spoke_round = state.round_for_turn(just_spoke_turn)
+
+    new_turn_record = {
+        "ts": _now_iso_z(),
+        "type": "debate_turn",
+        "debate_id": args.debate_id,
+        "speaker": just_spoke_speaker,
+        "round": just_spoke_round,
+        "turn": just_spoke_turn,
+        "argument": arg_text.rstrip("\n"),
+    }
+
+    ctx_path = Path(state.init["context_file_path"])
+    if not ctx_path.exists():
+        return emit_failure(ExitCode.VALIDATION, "context file missing", fmt,
+                            code="context_file_missing",
+                            context={"path": str(ctx_path)}, timer=timer)
+    ctx_obj = json.loads(_read_text_file(ctx_path))
+
+    new_count = just_spoke_turn  # number of turns AFTER this one is recorded
+    if new_count >= state.bound:
+        next_data = {
+            "debate_id": args.debate_id,
+            "next_action": "synthesize",
+            "speaker": None,
+            "round": just_spoke_round,
+            "turn": new_count,
+            "prompt": "",
+        }
+    else:
+        next_speaker = rotation[new_count % len(rotation)]
+        augmented = _State(
+            init=state.init,
+            turns=state.turns + [_Turn(speaker=just_spoke_speaker,
+                                       round=just_spoke_round,
+                                       turn=just_spoke_turn,
+                                       argument=arg_text.rstrip("\n"))],
+            synthesized=False,
+        )
+        vars_ = _build_speaker_vars_for_speaker_turn(augmented, ctx_obj, next_speaker)
+        next_data = {
+            "debate_id": args.debate_id,
+            "next_action": "speak",
+            "speaker": next_speaker,
+            "round": state.round_for_turn(new_count + 1),
+            "turn": new_count + 1,
+            "prompt": _render_prompt(next_speaker, vars_),
+        }
+
+    if args.dry_run:
+        return emit_success(next_data, fmt, timer=timer, meta_extra={"dry_run": True})
+
+    write_err = _append_pad(pad, new_turn_record)
+    if write_err is not None:
+        return emit_failure(write_err, "failed to append turn record", fmt,
+                            code="pad_write_failed", retryable=True,
+                            context={"path": str(pad)}, timer=timer)
+    return emit_success(next_data, fmt, timer=timer)
 
 
 def _cmd_synthesize(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
