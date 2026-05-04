@@ -7,6 +7,7 @@
 #   uv sync                    # install runtime deps (tushare/pandas/numpy)
 #   uv sync --extra akshare    # also install AKShare HK fallback
 #   uv sync --extra us         # also install yfinance for US tickers
+#   uv sync --extra ta         # also install stockstats for technical_indicators.py
 #   uv sync --all-extras       # everything
 [project]
 name = "daisy-financial-research"
@@ -31,6 +32,8 @@ dependencies = [
 akshare = ["akshare>=1.18"]
 # US tickers in dexter_memory_log compute-returns / auto-resolve.
 us = ["yfinance>=0.2"]
+# Technical indicators (technical_indicators.py); pandas-only computation.
+ta = ["stockstats>=0.6"]
 
 [project.urls]
 Homepage = "https://github.com/Agents365-ai/daisy-financial-research"

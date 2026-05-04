@@ -69,6 +69,31 @@ Rationale: two SMAs for trend frame; MACD line + histogram for momentum and dive
 
 Avoid here: `close_10_ema` (redundant with `boll` middle on the short end), `boll_ub` / `boll_lb` (covered by interpreting price relative to `boll` + ATR rather than tracking both bands), `macds` (the histogram already captures the MACD-vs-signal information).
 
+## Computing these
+
+The indicator names above match the [`stockstats`](https://github.com/jealous/stockstats) column convention, so they can be computed directly via the bundled helper:
+
+```bash
+# Default 8 indicators (the worked picking example above), single value at as-of
+python <skill-dir>/scripts/technical_indicators.py --ts-code 600519.SH
+
+# Custom subset, last 5 trading days at-or-before 2026-04-15
+python <skill-dir>/scripts/technical_indicators.py \
+  --ts-code 00005.HK --indicators rsi,macd,boll \
+  --as-of 20260415 --history 5
+
+# US ticker (auto-routes to yfinance, no Tushare token needed)
+python <skill-dir>/scripts/technical_indicators.py --ts-code AAPL
+```
+
+Routing is automatic by ts_code suffix:
+
+- `*.SH` / `*.SZ` / `*.BJ` → Tushare `pro.daily` (needs `TUSHARE_TOKEN`)
+- `*.HK` → Tushare `pro.hk_daily` (needs `TUSHARE_TOKEN`)
+- bare ticker (no suffix) → `yfinance.download` (no token, optional dep)
+
+The script applies a strict **look-ahead-bias guard** before stockstats runs: any OHLCV row with `Date > --as-of` is dropped, so a backtest at `--as-of 20240315` cannot accidentally use 16 March data. Optional deps (`tushare`, `yfinance`, `stockstats`) are lazy-imported, so `--help` / `--schema` / `--dry-run` work without any of them installed.
+
 ## Source
 
-`TradingAgents/tradingagents/agents/analysts/market_analyst.py` lines 23–47 (system message, indicator block + selection rule). Daisy's adaptation drops the `get_stock_data` / `get_indicators` LangChain tool wiring — those are not part of the prompt itself.
+`TradingAgents/tradingagents/agents/analysts/market_analyst.py` lines 23–47 (system message, indicator block + selection rule). Daisy's adaptation drops the `get_stock_data` / `get_indicators` LangChain tool wiring — those are not part of the prompt itself. The computation helper in `scripts/technical_indicators.py` is a refactor of `TradingAgents/tradingagents/dataflows/stockstats_utils.py` for batch-indicator output and multi-market routing under the daisy envelope contract.

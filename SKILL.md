@@ -302,7 +302,7 @@ Recommended report sections:
 1. Executive summary / investment view.
 2. Company and ticker scope.
 3. Data sources and dates.
-4. Price and valuation snapshot. When the report needs a technical-analysis layer, pick up to 8 complementary indicators from `references/technical-indicator-cheatsheet.md`. Skip TA entirely for banks / insurers — RoTE / CET1 / NIM are the right frame for those.
+4. Price and valuation snapshot. When the report needs a technical-analysis layer, pick up to 8 complementary indicators from `references/technical-indicator-cheatsheet.md` and compute them via `scripts/technical_indicators.py --ts-code <code>` (auto-routes A-share/HK/US, applies a strict look-ahead-bias guard at `--as-of`). Skip TA entirely for banks / insurers — RoTE / CET1 / NIM are the right frame for those.
 5. Financial performance and key drivers.
 6. News/catalyst review. For A-share / 港股 names, pull China-market context (涨跌停 risk, 北向资金, 板块 rotation, 监管 backdrop) using the system prompt in `references/cn-market-analyst-prompts.md`.
 7. Bull/base/bear scenarios. For balanced single-company research, run the three-prompt debate template in `references/debate-prompts.md` (Bull → Bear → Synthesis) instead of writing scenarios free-form. The synthesis output's 5-tier rating maps directly onto `dexter_memory_log.py record --rating`. For position-sizing follow-up after the directional rating is set, optionally run `references/risk-debate-prompts.md` (Aggressive → Conservative → Neutral → Portfolio Manager). All synthesis outputs use the markdown shape and rating vocabulary documented in `references/decision-schema.md`.

@@ -36,8 +36,9 @@ Renaming a script is a breaking change to the skill contract.
 - `scripts/screen_a_share.py` — A-share screener with named presets (see `references/stock-screening-presets.md`); `--report` emits a Markdown source that `financial_report.py` can render. Default outputs: `./financial-research/watchlists/` (csv/json) and `./financial-research/reports/` (when `--report`).
 - `scripts/screen_hk_connect.py` — HK Stock Connect screener; only used when 港股通 is explicitly requested. Default output: `./financial-research/watchlists/`.
 - `scripts/akshare_hk_valuation.py` — HK valuation + fundamentals fallback via AKShare. Subcommands `valuation` (PE/PB/PS snapshot + Stock Connect eligibility via `stock_hk_valuation_comparison_em` + `stock_hk_security_profile_em`) and `fundamentals` (ROE/EPS/BPS/leverage time series via `stock_financial_hk_analysis_indicator_em`). No Tushare token. Closes the documented `pro.hk_daily_basic` gap. AKShare is lazy-imported, so `--help` / `--schema` / `--dry-run` work without the optional dep installed; live calls return `dependency_missing` (exit=5) when akshare is absent.
+- `scripts/technical_indicators.py` — point-in-time technical-indicator calculator (SMA/EMA/MACD/RSI/Bollinger/ATR/VWMA via `stockstats`). Auto-routes by ts_code suffix: `*.SH/SZ/BJ` → `pro.daily`, `*.HK` → `pro.hk_daily`, bare → `yfinance.download`. Look-ahead-bias guard filters rows by `Date <= --as-of` before stockstats runs, so backtests cannot see future bars. Default indicators are the 8 from `references/technical-indicator-cheatsheet.md` "Worked picking example". `tushare`/`yfinance`/`stockstats` are all lazy-imported; `--help`/`--schema`/`--dry-run` work without any of them. Read-only (no file output, no `--out-dir`). Design ported from `TradingAgents/tradingagents/dataflows/stockstats_utils.py`, refactored for batch indicator output and multi-market routing.
 
-All scripts accept `--out-dir <root>`; subdirs are appended automatically.
+All mutating scripts accept `--out-dir <root>`; subdirs are appended automatically. `technical_indicators.py` is read-only and has no `--out-dir`.
 
 ## Agent-native CLI contract
 
@@ -61,10 +62,10 @@ When adding a new script: import from `_envelope`, define a `SCHEMA` dict, call 
 
 ```bash
 uv sync --all-extras
-uv run pytest tests/        # 49 tests, ~6 s, no Tushare token, no network
+uv run pytest tests/        # 59 tests, ~6 s, no Tushare token, no network
 ```
 
-Coverage: `--help` / `--schema` / `--dry-run` invariants across all 7 scripts, validation/no_data error envelopes, `DAISY_FORCE_JSON` override, full memory-log lifecycle (record idempotency → resolve atomic rewrite → list/context/stats), on-disk format wire-compatibility with TradingAgents `memory.py`, plus `compute-returns` / `auto-resolve` dry-run + validation paths. See `tests/README.md`. Run before committing any change to `scripts/`.
+Coverage: `--help` / `--schema` / `--dry-run` invariants across all 8 scripts, validation/no_data error envelopes, `DAISY_FORCE_JSON` override, full memory-log lifecycle (record idempotency → resolve atomic rewrite → list/context/stats), on-disk format wire-compatibility with TradingAgents `memory.py`, plus `compute-returns` / `auto-resolve` dry-run + validation paths and `technical_indicators` market-routing dry-run. See `tests/README.md`. Run before committing any change to `scripts/`.
 
 ## Tushare gotchas (verified in this env)
 
