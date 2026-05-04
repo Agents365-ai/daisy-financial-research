@@ -1,61 +1,77 @@
-# Daisy 金融研究 — 自动化股票/公司研究 Agent Skill
+# Daisy 金融研究
+
+> 给 AI agent 用的股票研究 skill。计划 → 取数 → 校验 → 出报告。覆盖 A 股、港股、美股。
 
 [English](README.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research) | [Releases](https://github.com/Agents365-ai/daisy-financial-research/releases)
 
 ![Daisy 投研智能体工作流](assets/daisy-workflow-cn.jpg)
 
-## 这是什么
+---
 
-一个面向 AI Coding Agent 的金融研究技能 (skill)。给定股票/公司/行业话题，它会先制定研究计划，再用 Tushare 取结构化数据、用 Brave/Bailian MCP 做网络检索、用 Python 做计算与估值，最后产出带来源、可复核的 Markdown + HTML(+ PDF) 报告。
+## 你最终拿到什么
 
-设计参照 `virattt/dexter` 的迭代式 agent 循环 (plan → gather → validate → answer)，但作为一个跨平台 skill 打包，无需独立 CLI。
+把一只股票、一个板块或一个主题丢给 agent，daisy 把它变成一个有结构的分析师工作流，并且**留下一份你随时能回头查的审计轨迹**。
 
-**关键能力:**
-- **Agent-native CLI** (v2.1.0+)：每个脚本在 stdout 不是 TTY 时自动输出稳定的 `{ok, data, meta}` JSON envelope，全部支持 `--schema` 内省、`--dry-run` 预演，退出码 0–5 全部明文文档化。
-- **跨会话决策记忆** (v2.2.0+)：追加式 Markdown 决策日志，`pending → resolved` 生命周期，原子化重写，胜率 / 平均超额收益统计。文件格式与 TradingAgents 的 `memory.py` 字节级兼容。
-- **AKShare 港股兜底** (v2.3.0+)：填补 daisy 在 CLAUDE.md 已记录的 Tushare gap (`pro.hk_daily_basic` 在本环境返回 `请指定正确的接口名`)，提供 PE/PB/PS 快照与 ROE/EPS/BPS 时间序列，无需 Tushare token，懒加载。
-- **Prompt 模板库** (v2.4.0+)：从 TradingAgents 借鉴的 5 份 prompt 文档 — 多空 / 多空辩论 + 综合，激进 / 保守 / 中立风险辩论，反思 prompt，决策 schema，A 股/港股市场分析框架，技术指标 cheatsheet。详见 `references/`。
-- **Auto-resolve 工作流** (v2.5.0+)：`dexter_memory_log.py auto-resolve` 自动取价（决策日 + as-of 日）+ 取对应基准（A 股 → CSI 300，港股 → HSI 经 AKShare Sina 兜底，美股 → SPY 经 yfinance），算 raw / alpha / 持仓天数，并一步完成 pending 条目的 resolve。
-- **技术指标 + 决策级回测 + agent 循环加固** (v2.6.0+)：
-  - `scripts/technical_indicators.py` — 通过 `stockstats` 计算 SMA / EMA / MACD / RSI / Bollinger / ATR / VWMA，**内置 look-ahead-bias 守卫**：所有 `Date > --as-of` 的行在 stockstats 之前就被裁掉。按 ts_code 后缀自动路由到 `pro.daily` / `pro.hk_daily` / `yfinance.download`。
-  - `references/data-source-routing.md` — 三市场（A 股 / 港 / 美）×多数据类型的统一路由表，主源 + 兜底链一目了然。`references/hk-ticker-name.json` 是 ~30 个港股核心标的的 5 位代码 → 中文名字典；`akshare_hk_valuation.py name --ts-code <code>` 是零 API 调用的本地查询子命令。
-  - `dexter_memory_log.py backtest` — 给定 `--from / --to` 窗口对已 resolve 的条目做风险调整聚合：每 rating 桶的均值 alpha、命中率、`alpha_t_stat`、`annualized_alpha_pct`、Sortino-flavored 比率，以及累计 alpha 曲线和它的最大回撤。**故意不叫 Sharpe** —— 日志记的是离散决策不是连续 NAV，命名上就把这点说清楚。
-  - `dexter_memory_log.py record --rating` 现在容错 LLM 输出 —— 接受规范单词、markdown 粗体（`**Rating**: Buy`）或整段 Portfolio Manager synthesis 段落；遇到完全没有 5 档评级词的输入会**显式拒绝**而不是静默落到 Hold。
-  - `dexter_scratchpad.py can-call <pad> <tool> <query>` — 移植自 `virattt/dexter` 的软循环上限 + 相似度去重。永远返回 `allowed: true`（软警告而非硬阻断），但当同一个工具已被调用 ≥ `--max-calls` 次或新查询和已记录的某次调用文本相似时会发出 warning（标准库 `difflib`，无 embedding 依赖）。
-- 计划先行 + JSONL scratchpad，记录每次工具调用、参数、结果、假设。
-- DCF 估值 + 敏感性矩阵 + 合理性校验。
-- 银行/金融板块估值替代框架 (RoTE / CET1 / NIM / P/B / 派息率)。
-- A 股 + 港股通预设筛选 (股息质量、价值、动量等)。
-- 三层报告输出 (md → html → 可选 pdf)，CSS 已内置中英文字体回退。
-- Brave MCP + Bailian WebSearch MCP 双通道检索。
+落到磁盘上的产出 (默认全部在当前目录的 `./financial-research/` 下)：
 
-## 多平台支持
+- **`reports/<时间戳>_<slug>.{md,html,pdf}`** —— 带来源引用的研究报告 (Markdown 源 + 浏览器即开即看的 HTML + 可选 PDF，CSS 已处理中英文字体回退)
+- **`watchlists/<时间戳>_<preset>.{csv,json}`** —— 多因子筛选输出：股息质量、价值、成长、动量、港股通等
+- **`scratchpad/<时间戳>.jsonl`** —— 这次任务里 agent 调用的每一个工具、参数、原始结果、假设。**可重放**
+- **`memory/decision-log.md`** —— 跨会话的追加式决策日志，每一笔 Buy / Overweight / Hold / Underweight / Sell 评级都有 `pending → resolved` 生命周期，每个 closed 条目带 2-4 句话的反思
+- **`universes/<日期>_hk-connect-universe.csv`** —— 南向港股通 universe 快照
 
-| 平台 | 状态 | 说明 |
+## 工作流是怎么跑的
+
+当用户说"深度研究茅台"/"给汇丰做个 DCF"/"筛一批 A 股股息质量股"时：
+
+1. **拉记忆。** `dexter_memory_log.py context --ticker <X>` 把同一只票过去的研究记录 (含已 resolve 的实际超额收益) 注入到 plan 步骤。**让过去的错误指导这次决策。**
+2. **写计划。** Agent 在动任何数据源之前，先把 3-7 步的研究计划写进每任务一份的 JSONL scratchpad。
+3. **路由取数。** 按代码后缀分流：`*.SH/SZ/BJ` → Tushare `pro.daily` / `pro.daily_basic` / `pro.fina_indicator` / `pro.income` 等；`*.HK` → Tushare `pro.hk_daily` 加上 AKShare 兜底 (因为 `pro.hk_daily_basic` 在本环境返回 `请指定正确的接口名`)；裸代码 → yfinance。完整的主源 + 兜底链表见 `references/data-source-routing.md`。
+4. **软循环上限。** 每次工具调用前，`dexter_scratchpad.py can-call <tool> <query>` 会预警两种典型故障：(a) 同一个工具本任务已经被调用 ≥ N 次；(b) 这次的查询和之前某次很像。**这是软警告不是硬阻断**——agent 自己决定怎么应对。
+5. **算估值。** 普通公司：DCF + 敏感性矩阵。**银行/保险/金融板块：daisy 自动跳过 DCF，改用 RoTE / CET1 / NIM / P/B / 派息率**——DCF 对金融股是错的口径，但原生 agent 经常在这上面翻车。技术指标 (SMA / MACD / RSI / Bollinger / ATR) 通过 `scripts/technical_indicators.py`，**内置 look-ahead-bias 守卫**：`Date > --as-of` 的行在 stockstats 拿到数据之前就被裁掉了，回测看不到未来。
+6. **数值校验。** 硬性 checklist：单位、币种、期间口径、每股分母、市值日期、排名 universe。**不通过就显式标出来，不会偷偷糊弄。**
+7. **多空辩论 (可选，给单股深度报告用)。** 三段式 prompt 模板 + 明确的轮次状态机；synthesis 输出用规范的 5 档评级，能直接落进决策日志。
+8. **出报告。** `scripts/financial_report.py` 把 Markdown 源渲染成 HTML，可选再到 PDF。规整的章节结构：scope → data → price/valuation → financial drivers → news/catalysts → bull/base/bear → risks → evidence tables → 免责声明。
+9. **写决策日志。** 最终评级以 *pending* 状态记入决策日志。日后 `dexter_memory_log.py auto-resolve` 自动取 `decision_date` 和 `as_of_date` 的收盘价、按市场选对应基准 (A 股 → CSI 300、港股 → HSI 经 AKShare Sina 兜底、美股 → SPY)、算实际 alpha + 持仓天数，并把 entry 改写为 resolved + 写入反思。
+10. **战绩审计。** `dexter_memory_log.py backtest` 在指定窗口聚合所有已 resolve 条目：每 rating 桶的均值 alpha、命中率、`alpha_t_stat`、年化 alpha、Sortino-flavored 比率，加上累计 alpha 曲线和它的最大回撤。**故意不叫 Sharpe**——日志记的是离散决策不是连续 NAV，命名上就把这点说清楚。
+
+## 它和你自己组合工具的差别在哪
+
+| 关注点 | 自己组合 | 用 daisy |
 |---|---|---|
-| **Claude Code** | ✅ | 原生 SKILL.md 格式 |
-| **Opencode** | ✅ | 自动读取 `~/.claude/skills/` |
-| **OpenClaw / ClawHub** | ✅ | `metadata.openclaw` 命名空间，依赖检查 |
-| **Hermes Agent** | ✅ | `metadata.hermes` 命名空间 |
-| **OpenAI Codex** | ✅ | `agents/openai.yaml` sidecar |
-| **SkillsMP** | ✅ | GitHub topic 已配置 |
+| 取数前先写计划 | 经常跳过 | 永远先写——JSONL scratchpad 落盘 |
+| 同一个端点被调 5 次只换一点点参数 | 经典翻车 | `can-call` 在调用**之前**就警告 (`difflib`，无 embedding 依赖) |
+| 同一只票上次研究的结论 | 跨会话忘个干净 | `memory_log context` 在 plan 时自动注入 |
+| 银行用 DCF 估值 (口径错) | 看运气 | 自动改用 RoTE / CET1 / NIM / P/B |
+| `pro.hk_daily_basic` 接口"消失" | 突发故障 | 已记录的 gap，AKShare 兜底已接好 |
+| 技术指标里的 look-ahead bias | 容易悄无声息地引入 | `Date > --as-of` 的行在 stockstats 拿到之前就裁掉 |
+| LLM 输出 `**Rating**: Buy` 而不是规范 `Buy` | 静默落到 Hold 默认值 | 容错抽取；完全没 5 档评级词时**显式拒绝** |
+| 50 笔历史决策的命中率 | 手工 Excel | `memory_log backtest` (alpha t-stat、命中率、最大回撤) |
+| 带来源的研报排版 (中英文字体、表格、敏感性矩阵、注脚) | 每次手工调 | 一行命令出三层产物 |
+| Agent 集成 (JSON envelope、schema 内省、dry-run) | 自己写一堆 subprocess 胶水 | 每个脚本内置——基于 `error.code` 分支，无需解析 prose |
 
-## 前置依赖
+## 快速开始
 
 ```bash
-# Python 3.9+
-pip install tushare pandas requests
-# 可选: AKShare 港股估值/基本面兜底 (无需 Tushare token)
-pip install akshare
-# 可选: PDF 输出
-brew install pandoc
-brew install --cask mactex   # 或 brew install --cask basictex (体积小)
+export TUSHARE_TOKEN=...   # 任何 A 股/港股 Tushare 调用都需要
+
+# A 股股息质量 watchlist + 渲染成报告
+python <skill-dir>/scripts/screen_a_share.py --preset a_dividend_quality --top 50 --report
+python <skill-dir>/scripts/financial_report.py ./financial-research/reports/<latest>.md \
+    --title "A 股股息 watchlist" --slug a-div --pdf
+
+# 时点安全的技术指标 (look-ahead-bias 守卫)
+python <skill-dir>/scripts/technical_indicators.py \
+    --ts-code 600519.SH --as-of 20260415 --indicators rsi,macd,boll
+
+# 港股 ticker → 中文名零 API 本地查询
+python <skill-dir>/scripts/akshare_hk_valuation.py name --ts-code 00700.HK
+
+# 审计自己的决策战绩
+python <skill-dir>/scripts/dexter_memory_log.py backtest
 ```
 
-环境变量:
-```bash
-export TUSHARE_TOKEN=xxxxxxxx   # 任何 Tushare 调用都需要
-```
+任何脚本都接受 `--out-dir <root>` 来覆盖默认的 `./financial-research/` 目录。
 
 ## 安装
 
@@ -63,127 +79,67 @@ export TUSHARE_TOKEN=xxxxxxxx   # 任何 Tushare 调用都需要
 |---|---|---|
 | Claude Code | `git clone https://github.com/Agents365-ai/daisy-financial-research.git ~/.claude/skills/daisy-financial-research` | `git clone ... .claude/skills/daisy-financial-research` |
 | Opencode | `git clone ... ~/.config/opencode/skills/daisy-financial-research` | `git clone ... .opencode/skills/daisy-financial-research` |
-| OpenClaw | `clawhub install daisy-financial-research` 或 `git clone ... ~/.openclaw/skills/daisy-financial-research` | `git clone ... skills/daisy-financial-research` |
+| OpenClaw / ClawHub | `clawhub install daisy-financial-research` | `git clone ... skills/daisy-financial-research` |
 | Hermes | `git clone ... ~/.hermes/skills/research/daisy-financial-research` | 通过 `~/.hermes/config.yaml` 的 `external_dirs` |
 | OpenAI Codex | `git clone ... ~/.agents/skills/daisy-financial-research` | `git clone ... .agents/skills/daisy-financial-research` |
 | SkillsMP | `skills install daisy-financial-research` | — |
 
-## 快速开始
-
 ```bash
-# A 股股息质量 watchlist + Markdown 报告草稿
-python <skill-dir>/scripts/screen_a_share.py --preset a_dividend_quality --top 50 --report
+# 核心
+pip install tushare pandas requests
 
-# 把 Markdown 草稿渲染成三层报告
-python <skill-dir>/scripts/financial_report.py ./financial-research/reports/<TIMESTAMP>_a-share-a_dividend_quality-screen.md \
-    --title "A股股息 watchlist" --slug a-div-quality --pdf
+# 可选 extras
+pip install akshare      # 港股 PE/PB/PS + ROE/EPS 兜底 (无需 Tushare token)
+pip install yfinance     # 美股 ticker (technical_indicators / auto-resolve)
+pip install stockstats   # technical_indicators.py
+
+# PDF 输出
+brew install pandoc && brew install --cask basictex
 ```
 
-默认输出全部落到当前目录下的 `./financial-research/{reports,watchlists,scratchpad,universes,memory}/` 里。
+或者直接 `uv sync --all-extras`。
 
-## Agent-native CLI
+## 脚本一览
 
-`scripts/` 下所有脚本遵循统一契约，同时服务终端用户和通过 subprocess 调用的 agent。八个脚本同样的形状：
+| 脚本 | 作用 |
+|---|---|
+| `dexter_scratchpad.py` | 单任务 JSONL，记录每次工具调用。`can-call` 子命令在调用前预警重复 |
+| `dexter_memory_log.py` | 跨会话决策日志：`record` / `resolve` / `list` / `context` / `stats` / `backtest` / `compute-returns` / `auto-resolve` |
+| `screen_a_share.py` | A 股多因子筛选 (预设驱动：股息、价值、质量、动量) |
+| `screen_hk_connect.py` | 港股通筛选 (仅在用户明确要求 港股通 时使用) |
+| `hk_connect_universe.py` | 南向港股通 universe 导出，自带日期回填 |
+| `akshare_hk_valuation.py` | 港股 PE/PB/PS + ROE/EPS/BPS via AKShare；`name` 子命令做零 API 本地字典查询 |
+| `technical_indicators.py` | 时点安全的 SMA/EMA/MACD/RSI/Bollinger/ATR/VWMA，含 look-ahead-bias 守卫 |
+| `financial_report.py` | Markdown → HTML → 可选 PDF 报告渲染，CSS 已含中英文字体回退 |
 
-```bash
-# 内省脚本的参数和输出 schema (agent 应优先用这个，而不是解析 --help)
-python <skill-dir>/scripts/screen_a_share.py --schema
+**Agent-native CLI 契约**——每个脚本都支持：
+- `--schema`——给 agent 内省的 JSON 参数规格 (优先于解析 `--help`)
+- `--dry-run`——预演请求形状，不调用上游 API、不写文件
+- `--format json|table`——stdout 不是 TTY 时自动 JSON；`DAISY_FORCE_JSON=1` 强制
+- 结构化退出码：`0` 成功 · `1` 运行时 · `2` 认证 · `3` 参数 · `4` 无数据 · `5` 依赖
+- 稳定的成功/错误 envelope：`{ok, data, meta}` / `{ok: false, error: {code, message, retryable, context}, meta}`
 
-# 预演请求形状 — 不调用 Tushare、不写文件
-python <skill-dir>/scripts/screen_a_share.py --preset a_value --dry-run
+## 参考文档
 
-# 强制 JSON 输出，不管 stdout 是不是 TTY
-DAISY_FORCE_JSON=1 python <skill-dir>/scripts/screen_a_share.py --preset a_value
-```
+Agent 在工作流需要的时候按需读取 `references/` 下的这些文档：
 
-**输出自动检测：** stdout 不是 TTY 时输出单一 JSON envelope；stdout 是 TTY 时输出原来的人类可读表格。可用 `--format json|table` 强制指定。
-
-**成功 envelope：**
-```json
-{
-  "ok": true,
-  "data": { "trade_date": "20260430", "candidates": 50, "csv": "...", "preview": [...] },
-  "meta": { "schema_version": "1.0.0", "request_id": "req_abc123", "latency_ms": 412 }
-}
-```
-
-**错误 envelope：**
-```json
-{
-  "ok": false,
-  "error": { "code": "no_data", "message": "...", "retryable": true, "context": {...} },
-  "meta": { ... }
-}
-```
-
-**退出码：** `0` 成功 · `1` 运行时错误 · `2` 认证 · `3` 参数验证 · `4` 无数据 · `5` 依赖缺失。
-
-**长时操作**(`screen_hk_connect.py --with-momentum`、`financial_report.py`) 在 stderr 上发 NDJSON 进度事件，每个阶段一行 JSON，agent 不用阻塞在 stdout 上也能监测活性。
-
-## 输出路径
-
-| 脚本 | 默认子目录 | 用途 |
-|---|---|---|
-| `dexter_scratchpad.py` | `./financial-research/scratchpad/` | 单任务 JSONL，记录工具调用/参数/结果/假设。v2.6.0+ 新增 `can-call` 子命令，工具调用前做软循环上限 + 相似度去重 |
-| `dexter_memory_log.py` | `./financial-research/memory/` | 跨会话决策日志，`pending → resolved` 生命周期。v2.5.0+ 新增 `auto-resolve` 子命令，自动取价 + 取基准 + 算超额收益，一步完成解析。v2.6.0+ 新增 `backtest`（每 rating 桶的 alpha t-stat / 年化 alpha / Sortino-flavored / 累计 alpha 回撤）和 `record --rating` 容错抽取 |
-| `financial_report.py` | `./financial-research/reports/` | Markdown → HTML → 可选 PDF 报告渲染 |
-| `screen_a_share.py` | `./financial-research/watchlists/` (`--report` 时 + `reports/`) | A 股多因子筛选 (预设驱动) |
-| `screen_hk_connect.py` | `./financial-research/watchlists/` | 港股通筛选 (仅在用户明确要求 港股通 时使用) |
-| `hk_connect_universe.py` | `./financial-research/universes/` | 南向港股通 universe 导出 |
-| `akshare_hk_valuation.py` | (只读) | 用 AKShare 取港股 PE/PB/PS + ROE/EPS — 填补 `pro.hk_daily_basic` gap。v2.6.0+ 新增 `name` 子命令（零 API 调用的本地字典 ticker → 中文名查询）|
-| `technical_indicators.py` (v2.6.0+) | (只读) | 通过 `stockstats` 计算 SMA/EMA/MACD/RSI/Bollinger/ATR/VWMA，含 look-ahead-bias 守卫。自动路由 A 股 / 港 / 美 |
-
-任何脚本都接受 `--out-dir <root>` 来自定义根目录，子目录会自动追加。
-
-**Hermes 用户**: 想保留旧的 `~/.hermes/reports/financial-research/<subdir>/` 布局，给每个脚本加 `--out-dir ~/.hermes/reports/financial-research` 即可。
-
-## 用 uv 管理依赖
-
-`pyproject.toml` 列出运行时依赖，本地用 uv 复现环境：
-
-```bash
-uv sync                  # 核心: tushare / pandas / numpy / requests
-uv sync --extra akshare  # 加上: akshare (港股估值 + HSI 基准回退)
-uv sync --extra us       # 加上: yfinance (auto-resolve / technical_indicators 处理美股 ticker)
-uv sync --extra ta       # 加上: stockstats (technical_indicators.py)
-uv sync --all-extras     # 全部装上
-```
+- `data-source-routing.md`——三市场数据源路由表 (主源 + 兜底链)
+- `hk-ticker-name.json`——港股 ticker → 中文名字典
+- `stock-screening-presets.md`——筛选预设注册表
+- `technical-indicator-cheatsheet.md`——11 个指标的选用指南
+- `debate-prompts.md` / `risk-debate-prompts.md`——多空/综合 + 激进/保守/中立辩论模板，含明确的轮次 Loop spec
+- `decision-schema.md`——5 档评级词表 + Markdown 输出契约
+- `reflection-prompt.md`——固定形状的反思 prompt
+- `cn-market-analyst-prompts.md`——A 股/港股市场分析框架 (涨跌停 / 北向资金 / 板块轮动)
+- `position-sizing.md`、`hsbc-hk-bank-research-test-20260429.md`——仓位推荐配方 + 银行估值实战
 
 ## 自动更新
 
-技能会在每次会话首次调用时检查 `<skill-dir>/.last_update`。超过 24 小时则静默 `git pull --ff-only`。失败 (离线/冲突/非 git checkout) 不会打断流程，也不会通知用户。
-
-手动更新:
-```bash
-cd <skill-dir> && git pull
-```
-
-## 与无 skill 的对比
-
-| 能力 | 原生 agent | 本 skill |
-|---|---|---|
-| 计划先行 + scratchpad | 否 | 是 (强制 JSONL 记录) |
-| 跨会话决策记忆 | 否 | 追加式 Markdown 日志 + 胜率 / 平均超额收益统计 |
-| Agent-native CLI (JSON envelope, schema 内省, dry-run) | 需手写 | 每个脚本内置 |
-| 数值校验 checklist | 否 | 是 (单位/币种/期间/口径) |
-| 银行估值不用 DCF | 看运气 | 默认强制改用 RoTE/CET1/NIM/P/B |
-| Tushare 路由 + 已知失败接口规避 | 否 | 是 (内置 gotchas + 港股 AKShare 兜底) |
-| 多预设股票筛选 | 否 | 是 (`a_dividend_quality` / `a_value` / 港股通) |
-| 三层报告 (md+html+pdf) | 需手写 | 一行命令产出 |
-| 港股通 universe 导出 | 否 | 是 (向后回填日期) |
-| 软循环上限 + 重复查询检测 | 否 | `dexter_scratchpad.py can-call`（计数 + `difflib` 相似度，调用前先警告）|
-| 多空 / 风险辩论 prompt 模板 | 否 | `references/debate-prompts.md`, `references/risk-debate-prompts.md`（含明确的轮次状态机 Loop spec）|
-| 决策 schema (5 档评级 + Markdown 输出契约) | 否 | `references/decision-schema.md` |
-| 容错从 PM synthesis 中抽取 rating | 否 | `dexter_memory_log.py record --rating "**Rating**: Buy ..."`（无 rating 词时显式拒绝，不静默落 Hold）|
-| A 股 / 港股市场分析师 prompt | 否 | `references/cn-market-analyst-prompts.md` |
-| 自动 resolve 决策日志 (取价 + 取基准 + 算 alpha) | 否 | `dexter_memory_log.py auto-resolve` |
-| 决策级聚合回测（alpha t-stat、年化 alpha、Sortino-flavored、累计 alpha 回撤）| 否 | `dexter_memory_log.py backtest --from --to --rating` |
-| 时点安全的技术指标（look-ahead-bias 守卫）| 需手写 | `scripts/technical_indicators.py`（自动路由 A 股 / 港 / 美）|
-| 三市场数据源路由参考（主源 + 兜底链）| 否 | `references/data-source-routing.md` + `references/hk-ticker-name.json` |
+技能在每次会话首次调用时检查 `<skill-dir>/.last_update`，超过 24 小时则静默 `git pull --ff-only`。失败 (离线 / 冲突 / 非 git checkout) 不打断流程。
 
 ## 免责声明
 
-本技能仅用于数据分析与研究记录，不构成投资建议。所有结论需结合最新公开信息独立判断。
+本技能仅产出数据分析和研究记录，**不构成投资建议**。所有结论需结合最新公开信息独立判断。
 
 ## 支持作者
 

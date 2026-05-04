@@ -1,61 +1,77 @@
-# Daisy Financial Research — Autonomous Stock / Company Research Skill
+# Daisy Financial Research
+
+> Stock research skill for AI agents. Plan → fetch → validate → report. A-share, HK, US.
 
 [中文](README_CN.md) | [GitHub](https://github.com/Agents365-ai/daisy-financial-research) | [Releases](https://github.com/Agents365-ai/daisy-financial-research/releases)
 
 ![Daisy investment research workflow](assets/daisy-workflow-en.jpg)
 
-## What it does
+---
 
-A multi-platform agent skill for finance research. Given a stock/company/sector topic, it plans the research, pulls structured data from Tushare, searches the web via Brave / Bailian MCP, runs Python for math and valuation, and produces a sourced, reproducible Markdown + HTML (+ optional PDF) report.
+## What you get
 
-Design borrows from `virattt/dexter` — iterative agent loop (plan → gather → validate → answer) — but packaged as a cross-platform skill, no separate CLI.
+Point an agent at a stock, sector, or theme. Daisy turns it into the structured workflow of an analyst — and leaves an audit trail you can come back to.
 
-**Key capabilities:**
-- **Agent-native CLI** (v2.1.0+): every script auto-emits a stable `{ok, data, meta}` JSON envelope when stdout isn't a TTY, supports `--schema` introspection and `--dry-run`, with documented exit codes 0–5.
-- **Cross-session decision memory** (v2.2.0+): append-only Markdown log with `pending → resolved` lifecycle, atomic rewrites, win-rate / mean-alpha stats. Format wire-compatible with TradingAgents' `memory.py`.
-- **AKShare HK fallback** (v2.3.0+): closes the documented `pro.hk_daily_basic` Tushare gap with PE/PB/PS snapshots and ROE/EPS/BPS time series — no Tushare token, lazy-imported.
-- **Borrowed prompt library** (v2.4.0+): five reference docs adapted from TradingAgents — Bull / Bear / Synthesis debate, Aggressive / Conservative / Neutral risk debate, reflection prompt, decision schema, China-market analyst framing, technical-indicator cheatsheet. See `references/`.
-- **Auto-resolve workflow** (v2.5.0+): `dexter_memory_log.py auto-resolve` fetches `close[decision_date]` and `close[as_of_date]` for the ticker plus the right benchmark (CSI 300 for `*.SH/SZ/BJ`, HSI for `*.HK` with AKShare Sina fallback, SPY for US via yfinance), computes raw + alpha + holding days, then resolves the pending memory-log entry in one call.
-- **Technical indicators + decision-level backtest + tighter agent loop** (v2.6.0+):
-  - `scripts/technical_indicators.py` — point-in-time SMA / EMA / MACD / RSI / Bollinger / ATR / VWMA via `stockstats`, with a strict look-ahead-bias guard (rows with `Date > --as-of` are dropped before computation). Auto-routes by ts_code suffix to `pro.daily` / `pro.hk_daily` / `yfinance.download`.
-  - `references/data-source-routing.md` — canonical (market × data type) routing table consolidating A-share / HK / US primary calls and documented fallback chains. `references/hk-ticker-name.json` is a curated 5-digit → Chinese-name dict for ~30 HK majors; `akshare_hk_valuation.py name --ts-code <code>` is a zero-API local lookup.
-  - `dexter_memory_log.py backtest` — risk-adjusted decision-level metrics over a `--from` / `--to` window: per-rating mean alpha, hit rate, `alpha_t_stat`, `annualized_alpha_pct`, Sortino-flavored ratio, plus the cumulative-alpha curve and its max drawdown. Deliberately not called Sharpe — the log records discrete decisions, not a continuous NAV.
-  - `dexter_memory_log.py record --rating` now tolerates LLM-formatted input — accepts a canonical word, a markdown bold tag (`**Rating**: Buy`), or a full Portfolio Manager synthesis paragraph; rejects input with no 5-tier word loudly instead of silently defaulting to Hold.
-  - `dexter_scratchpad.py can-call <pad> <tool> <query>` — soft loop-limit + similarity guard ported from `virattt/dexter`. Always allows (returns `allowed: true`) but emits a warning when the same tool has already been called >= `--max-calls` times in the pad, or when the new query is textually similar to a prior call (stdlib `difflib`, no embedding deps).
-- Plan-first workflow with JSONL scratchpad recording every tool call, params, result, assumption.
-- DCF valuation with sensitivity matrix and sanity checks.
-- Bank / financial-sector valuation override (RoTE / CET1 / NIM / P/B / payout) instead of forcing DCF on the wrong frame.
-- A-share + Hong Kong Stock Connect screening presets (dividend-quality, value, momentum, etc.).
-- Three-layer report output (md → html → optional pdf), CSS already handles CN/EN font fallback.
-- Brave MCP + Bailian WebSearch MCP for web context.
+Tangible deliverables, all written under `./financial-research/` in your cwd:
 
-## Multi-Platform Support
+- **`reports/<ts>_<slug>.{md,html,pdf}`** — the sourced research note (markdown source + browser-ready HTML + optional PDF, CN/EN fonts handled).
+- **`watchlists/<ts>_<preset>.{csv,json}`** — multi-factor screener output: dividend quality, value, growth, momentum, HK Stock Connect, and so on.
+- **`scratchpad/<ts>.jsonl`** — every tool call, parameter, raw result, and assumption the agent made on this task. Replayable.
+- **`memory/decision-log.md`** — append-only Markdown log of every Buy / Overweight / Hold / Underweight / Sell call across sessions, with `pending → resolved` lifecycle and a 2-4 sentence reflection on each closed call.
+- **`universes/<date>_hk-connect-universe.csv`** — Southbound Stock Connect (港股通) universe snapshot.
 
-| Platform | Status | Notes |
+## How the workflow runs
+
+When a user asks "deep-dive on Mao Tai" / "DCF for HSBC" / "find me A-share dividend names with quality":
+
+1. **Memory pull.** `dexter_memory_log.py context --ticker <X>` injects past calls on the same ticker (with realized alpha) into the plan step. Past mistakes inform the current call.
+2. **Plan.** The agent writes a 3–7 step plan into a per-task JSONL scratchpad before touching any data source.
+3. **Data routing.** Suffix-based: `*.SH/SZ/BJ` → Tushare `pro.daily` / `pro.daily_basic` / `pro.fina_indicator` / `pro.income` / etc.; `*.HK` → Tushare `pro.hk_daily` plus AKShare for the documented `pro.hk_daily_basic` gap; bare US ticker → yfinance. The full primary + fallback table lives in `references/data-source-routing.md`.
+4. **Soft loop limits.** Before each tool call, `dexter_scratchpad.py can-call <tool> <query>` flags two failure modes: (a) the same tool already called ≥ N times this task, (b) a textually similar query was already issued. It's a warning, not a block — the agent decides what to do.
+5. **Computation.** DCF with sensitivity matrix for normal companies. **For banks / insurers / financial-sector names, daisy automatically skips DCF and uses RoTE / CET1 / NIM / P/B / payout instead** — DCF is the wrong frame for them, but most native agents miss this. Technical indicators (SMA / MACD / RSI / Bollinger / ATR) via `scripts/technical_indicators.py`, with a look-ahead-bias guard built in: rows newer than `--as-of` are dropped before the indicator engine sees the data, so backtests cannot peek at the future.
+6. **Numerical validation.** Hard checklist: units, currency, period, per-share denominators, market-cap date, ranking universe. Failures are surfaced, not silently fudged.
+7. **Bull / Bear / Synthesis** (optional, for balanced single-name research). Three-prompt template with an explicit round-counter loop spec; the synthesis output uses the canonical 5-tier rating that drops straight into the memory log.
+8. **Report.** `scripts/financial_report.py` renders the Markdown source to HTML, then optionally to PDF. Structured sections: scope → data → price/valuation → financial drivers → news/catalysts → bull/base/bear → risks → evidence tables → disclaimer.
+9. **Decision log.** The final call is recorded as a *pending* entry. Later, `dexter_memory_log.py auto-resolve` fetches close prices on `decision_date` and `as_of_date`, picks the right benchmark (CSI 300 for A-share, HSI for HK with AKShare Sina fallback, SPY for US), computes realized alpha + holding days, and closes the entry with the agent's reflection.
+10. **Track-record audit.** `dexter_memory_log.py backtest` aggregates resolved entries over a window: per-rating mean alpha, hit rate, alpha t-stat, annualized alpha, Sortino-flavored ratio, plus the cumulative-alpha curve and its max drawdown. Honestly *not* called Sharpe — daisy logs decisions, not a continuous NAV.
+
+## What's actually different
+
+| Concern | Rolling your own | With daisy |
 |---|---|---|
-| **Claude Code** | ✅ Full | Native SKILL.md format |
-| **Opencode** | ✅ Full | Reads `~/.claude/skills/` automatically |
-| **OpenClaw / ClawHub** | ✅ Full | `metadata.openclaw` namespace, dependency gating |
-| **Hermes Agent** | ✅ Full | `metadata.hermes` namespace |
-| **OpenAI Codex** | ✅ Full | `agents/openai.yaml` sidecar |
-| **SkillsMP** | ✅ Indexed | GitHub topics configured |
+| Plan written down before data calls | Often skipped | Always — JSONL scratchpad on disk |
+| Same endpoint hit 5× with similar args | Common failure mode | `can-call` warns *before* it happens (`difflib`-based, no embeddings) |
+| Past calls on the same ticker | Forgotten across sessions | `memory_log context` injects them at plan time |
+| Bank valued via DCF (wrong frame) | Hit-or-miss | Auto-override to RoTE / CET1 / NIM / P/B |
+| `pro.hk_daily_basic` returns `请指定正确的接口名` | Surprise outage | Documented gap with AKShare fallback wired |
+| Look-ahead bias in technical indicators | Easy to introduce silently | Rows newer than `--as-of` filtered before stockstats sees them |
+| LLM emits `**Rating**: Buy` instead of `Buy` | Silent default to Hold | Tolerant extraction; loud rejection if no 5-tier word found |
+| Hit rate across 50 prior calls | Manual spreadsheet | `memory_log backtest` (alpha t-stat, hit rate, max-DD) |
+| Sourced report (CN+EN fonts, tables, sensitivity matrix, footnotes) | Manual every time | One command, three layers |
+| Agent integration (JSON envelope, schema introspection, dry-run) | Manual subprocess plumbing | Built into every script — branch on `error.code`, not parsed prose |
 
-## Prerequisites
+## Quick start
 
 ```bash
-# Python 3.9+
-pip install tushare pandas requests
-# Optional: AKShare HK valuation/fundamentals fallback (no Tushare token needed)
-pip install akshare
-# Optional: PDF output
-brew install pandoc
-brew install --cask mactex      # or basictex for a smaller install
+export TUSHARE_TOKEN=...   # required for any A-share/HK Tushare call
+
+# A-share dividend-quality watchlist + a rendered report
+python <skill-dir>/scripts/screen_a_share.py --preset a_dividend_quality --top 50 --report
+python <skill-dir>/scripts/financial_report.py ./financial-research/reports/<latest>.md \
+    --title "A-share dividend watchlist" --slug a-div --pdf
+
+# Point-in-time technical indicators (look-ahead-bias guarded)
+python <skill-dir>/scripts/technical_indicators.py \
+    --ts-code 600519.SH --as-of 20260415 --indicators rsi,macd,boll
+
+# Zero-API HK ticker → Chinese name lookup
+python <skill-dir>/scripts/akshare_hk_valuation.py name --ts-code 00700.HK
+
+# Audit your decision track record
+python <skill-dir>/scripts/dexter_memory_log.py backtest
 ```
 
-Environment:
-```bash
-export TUSHARE_TOKEN=xxxxxxxx   # required for any Tushare call
-```
+Every script accepts `--out-dir <root>` to override the default `./financial-research/` location.
 
 ## Installation
 
@@ -63,127 +79,67 @@ export TUSHARE_TOKEN=xxxxxxxx   # required for any Tushare call
 |---|---|---|
 | Claude Code | `git clone https://github.com/Agents365-ai/daisy-financial-research.git ~/.claude/skills/daisy-financial-research` | `git clone ... .claude/skills/daisy-financial-research` |
 | Opencode | `git clone ... ~/.config/opencode/skills/daisy-financial-research` | `git clone ... .opencode/skills/daisy-financial-research` |
-| OpenClaw | `clawhub install daisy-financial-research` or `git clone ... ~/.openclaw/skills/daisy-financial-research` | `git clone ... skills/daisy-financial-research` |
+| OpenClaw / ClawHub | `clawhub install daisy-financial-research` | `git clone ... skills/daisy-financial-research` |
 | Hermes | `git clone ... ~/.hermes/skills/research/daisy-financial-research` | via `external_dirs` in `~/.hermes/config.yaml` |
 | OpenAI Codex | `git clone ... ~/.agents/skills/daisy-financial-research` | `git clone ... .agents/skills/daisy-financial-research` |
 | SkillsMP | `skills install daisy-financial-research` | — |
 
-## Quick Start
-
 ```bash
-# A-share dividend-quality watchlist + Markdown report draft
-python <skill-dir>/scripts/screen_a_share.py --preset a_dividend_quality --top 50 --report
+# Core
+pip install tushare pandas requests
 
-# Render the Markdown draft into the three-layer report
-python <skill-dir>/scripts/financial_report.py ./financial-research/reports/<TIMESTAMP>_a-share-a_dividend_quality-screen.md \
-    --title "A-share dividend watchlist" --slug a-div-quality --pdf
+# Optional extras
+pip install akshare      # HK PE/PB/PS + ROE/EPS fallback (no Tushare token)
+pip install yfinance     # US tickers (technical_indicators / auto-resolve)
+pip install stockstats   # technical_indicators.py
+
+# PDF rendering
+brew install pandoc && brew install --cask basictex
 ```
 
-All output lands under `./financial-research/{reports,watchlists,scratchpad,universes,memory}/` in your cwd by default.
+Or with `uv`: `uv sync --all-extras`.
 
-## Agent-native CLI
+## Scripts at a glance
 
-Every script under `scripts/` follows a uniform contract designed for both humans at a terminal and agents calling via subprocess. Same shape, eight scripts:
+| Script | Purpose |
+|---|---|
+| `dexter_scratchpad.py` | Per-task JSONL of every tool call. `can-call` warns before repeat calls |
+| `dexter_memory_log.py` | Cross-session decision log: `record` / `resolve` / `list` / `context` / `stats` / `backtest` / `compute-returns` / `auto-resolve` |
+| `screen_a_share.py` | A-share multi-factor screener with named presets (dividend, value, quality, momentum) |
+| `screen_hk_connect.py` | HK Stock Connect screener (only when 港股通 is explicitly requested) |
+| `hk_connect_universe.py` | Southbound Stock Connect universe export with date back-fill |
+| `akshare_hk_valuation.py` | HK PE/PB/PS + ROE/EPS/BPS via AKShare; `name` for zero-API local-dict lookup |
+| `technical_indicators.py` | Point-in-time SMA/EMA/MACD/RSI/Bollinger/ATR/VWMA, look-ahead-bias guarded |
+| `financial_report.py` | Markdown → HTML → optional PDF report renderer with CN/EN font fallback |
 
-```bash
-# Discover the script's parameter and output schema (preferred over --help for agents)
-python <skill-dir>/scripts/screen_a_share.py --schema
+**Agent-native CLI contract** — every script supports:
+- `--schema` — JSON parameter spec for agent introspection (preferred over `--help`)
+- `--dry-run` — preview the request shape without any upstream call or file write
+- `--format json|table` — auto-JSON when stdout is not a TTY; `DAISY_FORCE_JSON=1` to override
+- Structured exit codes: `0` ok · `1` runtime · `2` auth · `3` validation · `4` no_data · `5` dependency
+- Stable success / error envelopes: `{ok, data, meta}` / `{ok: false, error: {code, message, retryable, context}, meta}`
 
-# Preview the request shape — no Tushare call, no file written
-python <skill-dir>/scripts/screen_a_share.py --preset a_value --dry-run
+## Reference docs
 
-# Force JSON regardless of TTY state
-DAISY_FORCE_JSON=1 python <skill-dir>/scripts/screen_a_share.py --preset a_value
-```
+The agent reads these from `references/` when the workflow needs them:
 
-**Output auto-detection:** when stdout is not a TTY, scripts emit a single JSON envelope. When stdout *is* a TTY, scripts emit the legacy human table. Override with `--format json|table`.
-
-**Success envelope:**
-```json
-{
-  "ok": true,
-  "data": { "trade_date": "20260430", "candidates": 50, "csv": "...", "preview": [...] },
-  "meta": { "schema_version": "1.0.0", "request_id": "req_abc123", "latency_ms": 412 }
-}
-```
-
-**Error envelope:**
-```json
-{
-  "ok": false,
-  "error": { "code": "no_data", "message": "...", "retryable": true, "context": {...} },
-  "meta": { ... }
-}
-```
-
-**Exit codes:** `0` ok · `1` runtime · `2` auth · `3` validation · `4` no_data · `5` dependency.
-
-**Long-running operations** (`screen_hk_connect.py --with-momentum`, `financial_report.py`) emit NDJSON progress events on stderr, one JSON line per phase, so an agent can detect liveness without blocking on stdout.
-
-## Output paths
-
-| Script | Default subdir | Purpose |
-|---|---|---|
-| `dexter_scratchpad.py` | `./financial-research/scratchpad/` | Per-task JSONL of tool calls, params, results, assumptions. v2.6.0+ adds `can-call` for soft loop-limit + similarity guard before each tool call |
-| `dexter_memory_log.py` | `./financial-research/memory/` | Cross-session decision log; `pending → resolved` lifecycle. Subcommands include `auto-resolve` (v2.5.0+) which fetches close prices and benchmark, computes raw + alpha, and persists the resolution in one call. v2.6.0+ adds `backtest` (per-rating alpha t-stat / annualized alpha / Sortino-flavored / cumulative-alpha drawdown) and tolerant `record --rating` extraction |
-| `financial_report.py` | `./financial-research/reports/` | Markdown → HTML → optional PDF report renderer |
-| `screen_a_share.py` | `./financial-research/watchlists/` (+ `reports/` with `--report`) | A-share multi-factor screener (presets) |
-| `screen_hk_connect.py` | `./financial-research/watchlists/` | HK Stock Connect screener (only when 港股通 explicitly requested) |
-| `hk_connect_universe.py` | `./financial-research/universes/` | Southbound Stock Connect universe export |
-| `akshare_hk_valuation.py` | (read-only) | HK PE/PB/PS + ROE/EPS via AKShare — closes `pro.hk_daily_basic` gap. v2.6.0+ adds `name` subcommand for zero-API local-dict ticker → Chinese-name lookup |
-| `technical_indicators.py` (v2.6.0+) | (read-only) | Point-in-time SMA/EMA/MACD/RSI/Bollinger/ATR/VWMA via `stockstats`, with look-ahead-bias guard. Auto-routes A-share/HK/US |
-
-Every script accepts `--out-dir <root>` to override the root; the subdir is appended automatically.
-
-**Hermes users:** to keep the legacy `~/.hermes/reports/financial-research/<subdir>/` layout, pass `--out-dir ~/.hermes/reports/financial-research` to every script.
-
-## Development with uv
-
-`pyproject.toml` lists the runtime dependencies. Reproduce the env locally:
-
-```bash
-uv sync                  # core: tushare / pandas / numpy / requests
-uv sync --extra akshare  # also: akshare (HK valuation + HSI benchmark fallback)
-uv sync --extra us       # also: yfinance (US tickers in auto-resolve / technical_indicators)
-uv sync --extra ta       # also: stockstats (technical_indicators.py)
-uv sync --all-extras     # everything
-```
+- `data-source-routing.md` — canonical (market × data type) routing table
+- `hk-ticker-name.json` — curated HK ticker → Chinese-name dict
+- `stock-screening-presets.md` — registry of screening presets
+- `technical-indicator-cheatsheet.md` — 11-indicator selection guide
+- `debate-prompts.md` / `risk-debate-prompts.md` — Bull/Bear/Synthesis + Aggressive/Conservative/Neutral templates with explicit loop specs
+- `decision-schema.md` — 5-tier rating vocabulary + markdown render contract
+- `reflection-prompt.md` — fixed-shape reflection prompt for memory-log resolve
+- `cn-market-analyst-prompts.md` — China-market analyst framing (涨跌停 / 北向资金 / 板块轮动)
+- `position-sizing.md`, `hsbc-hk-bank-research-test-20260429.md` — sizing recipe + bank valuation worked example
 
 ## Auto-update
 
-The skill checks `<skill-dir>/.last_update` on first use per conversation. If older than 24 hours, it silently runs `git pull --ff-only`. Failures (offline, conflict, not a git checkout) are ignored without interrupting the workflow.
-
-Manual update:
-```bash
-cd <skill-dir> && git pull
-```
-
-## vs no skill
-
-| Capability | Native agent | This skill |
-|---|---|---|
-| Plan-first + scratchpad | Sometimes | Always (JSONL on disk) |
-| Cross-session decision memory | No | Append-only Markdown log + win-rate / mean-alpha stats |
-| Agent-native CLI (JSON envelopes, schema introspection, dry-run) | Manual | Built-in for every script |
-| Numerical validation checklist | No | Yes (units / currency / period / scale) |
-| Bank valuation: skip DCF | Hit-or-miss | Default override to RoTE / CET1 / NIM / P/B |
-| Tushare routing + known-bad-interface avoidance | No | Built-in gotchas list + AKShare fallback for HK |
-| Multi-preset stock screening | No | Yes (`a_dividend_quality`, `a_value`, HK Connect) |
-| Three-layer report (md+html+pdf) | Manual | One command |
-| HK Connect universe export | No | Yes (with date back-fill) |
-| Soft loop limits + repeat-query detection | No | `dexter_scratchpad.py can-call` (count + `difflib`-based similarity warning before each tool call) |
-| Bull / bear / risk debate prompts | No | `references/debate-prompts.md`, `references/risk-debate-prompts.md` (with explicit Loop spec for round-counter exit) |
-| Decision schema (5-tier rating + markdown render contract) | No | `references/decision-schema.md` |
-| Tolerant rating extraction from PM synthesis output | No | `dexter_memory_log.py record --rating "**Rating**: Buy ..."` (rejects no-rating input loudly instead of silent Hold) |
-| China-market analyst framing | No | `references/cn-market-analyst-prompts.md` |
-| Auto-resolve memory log (fetch close + benchmark, compute alpha) | No | `dexter_memory_log.py auto-resolve` |
-| Aggregate decision-level backtest (alpha t-stat, annualized alpha, Sortino-flavored, cum-alpha drawdown) | No | `dexter_memory_log.py backtest --from --to --rating` |
-| Point-in-time technical indicators with look-ahead-bias guard | Manual | `scripts/technical_indicators.py` (auto-routes A-share / HK / US) |
-| Per-market data-source routing reference (primary + documented fallback chain) | No | `references/data-source-routing.md` + `references/hk-ticker-name.json` |
+The skill checks `<skill-dir>/.last_update` once per conversation. If the file is missing or older than 24 hours, daisy silently runs `git pull --ff-only`. Failures (offline, conflict, not a git checkout) are ignored without interrupting the workflow.
 
 ## Disclaimer
 
-This skill produces data analysis and research records, not investment advice. All conclusions require independent judgement against the latest public information.
+Data analysis and research records, not investment advice. All conclusions require independent judgement against the latest public information.
 
 ## Support
 
