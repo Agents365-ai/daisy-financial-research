@@ -714,7 +714,8 @@ def _cmd_next(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
         return emit_failure(ExitCode.VALIDATION, "context file missing", fmt,
                             code="context_file_missing",
                             context={"path": str(ctx_path)}, timer=timer)
-    ctx_obj = json.loads(_read_text_file(ctx_path))
+    ctx_obj, warnings = _read_context_with_drift_check(state)
+    warnings.extend(_check_prior_synthesis_drift(state))
 
     new_count = just_spoke_turn  # number of turns AFTER this one is recorded
     if new_count >= state.bound:
@@ -746,15 +747,69 @@ def _cmd_next(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
             "prompt": _render_prompt(next_speaker, vars_),
         }
 
+    meta_extra = {"dry_run": True} if args.dry_run else None
+    if warnings:
+        meta_extra = meta_extra or {}
+        meta_extra["warnings"] = warnings
+
     if args.dry_run:
-        return emit_success(next_data, fmt, timer=timer, meta_extra={"dry_run": True})
+        return emit_success(next_data, fmt, timer=timer, meta_extra=meta_extra)
 
     write_err = _append_pad(pad, new_turn_record)
     if write_err is not None:
         return emit_failure(write_err, "failed to append turn record", fmt,
                             code="pad_write_failed", retryable=True,
                             context={"path": str(pad)}, timer=timer)
-    return emit_success(next_data, fmt, timer=timer)
+    if warnings:
+        _persist_warnings(pad, args.debate_id, warnings)
+    return emit_success(next_data, fmt, timer=timer, meta_extra=meta_extra)
+
+
+def _read_context_with_drift_check(state: _State):
+    """Read context file, detect drift vs init-time hash. Returns (ctx_obj, warnings)."""
+    warnings = []
+    ctx_path = Path(state.init["context_file_path"])
+    ctx_text = _read_text_file(ctx_path)
+    if _sha256_text(ctx_text) != state.init["context_file_sha256"]:
+        warnings.append({
+            "code": "context_file_hash_drift",
+            "context": {"path": str(ctx_path),
+                        "init_hash": state.init["context_file_sha256"],
+                        "current_hash": _sha256_text(ctx_text)},
+        })
+    return json.loads(ctx_text), warnings
+
+
+def _check_prior_synthesis_drift(state: _State):
+    warnings = []
+    if state.debate_type != "risk":
+        return warnings
+    ps_path = state.init.get("prior_synthesis_file_path")
+    if not ps_path:
+        return warnings
+    p = Path(ps_path)
+    if not p.exists():
+        return warnings
+    cur = _sha256_text(_read_text_file(p))
+    if cur != state.init.get("prior_synthesis_sha256"):
+        warnings.append({
+            "code": "prior_synthesis_hash_drift",
+            "context": {"path": str(p),
+                        "init_hash": state.init.get("prior_synthesis_sha256"),
+                        "current_hash": cur},
+        })
+    return warnings
+
+
+def _persist_warnings(pad: Path, debate_id: str, warnings: list) -> None:
+    for w in warnings:
+        _append_pad(pad, {
+            "ts": _now_iso_z(),
+            "type": "debate_warning",
+            "debate_id": debate_id,
+            "code": w["code"],
+            "context": w["context"],
+        })
 
 
 def _build_synthesis_vars(state: _State, ctx: dict) -> dict:
@@ -812,7 +867,8 @@ def _cmd_synthesize(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
         return emit_failure(ExitCode.VALIDATION, "context file missing", fmt,
                             code="context_file_missing",
                             context={"path": str(ctx_path)}, timer=timer)
-    ctx_obj = json.loads(_read_text_file(ctx_path))
+    ctx_obj, warnings = _read_context_with_drift_check(state)
+    warnings.extend(_check_prior_synthesis_drift(state))
 
     speaker = SYNTH_SPEAKER[state.debate_type]
     vars_ = _build_synthesis_vars(state, ctx_obj)
@@ -828,8 +884,13 @@ def _cmd_synthesize(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
         "prompt": prompt,
     }
 
+    meta_extra = {"dry_run": True} if args.dry_run else None
+    if warnings:
+        meta_extra = meta_extra or {}
+        meta_extra["warnings"] = warnings
+
     if args.dry_run:
-        return emit_success(data, fmt, timer=timer, meta_extra={"dry_run": True})
+        return emit_success(data, fmt, timer=timer, meta_extra=meta_extra)
 
     synth_record = {
         "ts": _now_iso_z(),
@@ -842,7 +903,9 @@ def _cmd_synthesize(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
         return emit_failure(write_err, "failed to append synthesis record", fmt,
                             code="pad_write_failed", retryable=True,
                             context={"path": str(pad)}, timer=timer)
-    return emit_success(data, fmt, timer=timer)
+    if warnings:
+        _persist_warnings(pad, args.debate_id, warnings)
+    return emit_success(data, fmt, timer=timer, meta_extra=meta_extra)
 
 
 def main(argv: list[str] | None = None) -> int:
