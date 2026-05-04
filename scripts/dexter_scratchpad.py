@@ -34,7 +34,7 @@ from _envelope import (
 DEFAULT_ROOT_NAME = "financial-research"
 SUBDIR = "scratchpad"
 
-ENTRY_TYPES = ["plan", "tool_result", "thinking", "calculation", "validation", "final"]
+ENTRY_TYPES = ["plan", "tool_result", "thinking", "calculation", "validation", "debate_turn", "final"]
 
 SCHEMA = {
     "name": "dexter_scratchpad",

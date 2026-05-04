@@ -26,6 +26,32 @@ Run three internal sub-turns, then a synthesis:
 
 The synthesis output uses the exact markdown render contract documented in `references/decision-schema.md`, so it drops straight into `dexter_memory_log.py record --decision`.
 
+## Loop spec
+
+Ported from `TauricResearch/TradingAgents:tradingagents/graph/conditional_logic.py::should_continue_risk_analysis`. The agent drives the loop directly (no LangGraph), so this section is the contract.
+
+- **Parameter:** `max_risk_discuss_rounds` (default `1`). One round = three speaker turns (Aggressive + Conservative + Neutral), so `max_risk_discuss_rounds = 1` produces a 3-turn debate, `= 2` produces 6 turns, etc.
+- **Turn counter:** start at `0`. Increment by `1` after each speaker turn.
+- **Exit condition:** when `count >= 3 * max_risk_discuss_rounds`, stop and run the Portfolio Manager prompt.
+- **Speaker rotation (strict):** Aggressive → Conservative → Neutral → Aggressive → … . The very first turn is **Aggressive**. Each later turn must respond directly to the most recent argument from the *other two* analysts — this is what makes the three-vs-one structure produce judgment rather than three parallel monologues.
+- **Synthesis is not counted.** The Portfolio Manager runs exactly once, after the loop exits.
+- **Default escalation:** raise `max_risk_discuss_rounds` to `2` only when the first round leaves Aggressive vs Conservative deadlocked on a binary stop-loss / sizing question that Neutral did not break. Don't escalate past `2` for risk debate — sizing converges fast, and a third round usually just rephrases the second.
+
+Auditing the loop (optional but recommended for substantial reports): log each turn to the per-task scratchpad with the `debate_turn` entry type.
+
+```bash
+python <skill-dir>/scripts/dexter_scratchpad.py add <scratchpad.jsonl> debate_turn \
+  speaker=Aggressive round=1 turn=1 argument="<paragraph>"
+
+python <skill-dir>/scripts/dexter_scratchpad.py add <scratchpad.jsonl> debate_turn \
+  speaker=Conservative round=1 turn=2 argument="<paragraph>"
+
+python <skill-dir>/scripts/dexter_scratchpad.py add <scratchpad.jsonl> debate_turn \
+  speaker=Neutral round=1 turn=3 argument="<paragraph>"
+
+# loop exits because count (3) >= 3 * max_risk_discuss_rounds (1) → run Portfolio Manager
+```
+
 ---
 
 ## Prompt 1 — Aggressive Risk Analyst

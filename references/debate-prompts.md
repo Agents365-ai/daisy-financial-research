@@ -26,6 +26,29 @@ Record the synthesis output in the cross-session memory log (`scripts/dexter_mem
 
 The five-rating scale (`Buy / Overweight / Hold / Underweight / Sell`) matches the memory log's `--rating` enum on purpose, so the synthesis output drops straight in.
 
+## Loop spec
+
+Ported from `TauricResearch/TradingAgents:tradingagents/graph/conditional_logic.py::should_continue_debate`. The agent drives the loop directly (no LangGraph), so this section is the contract.
+
+- **Parameter:** `max_debate_rounds` (default `1`). One round = one Bull turn + one Bear turn, so `max_debate_rounds = 1` produces a 2-turn debate, `= 2` produces 4 turns, etc.
+- **Turn counter:** start at `0`. Increment by `1` after each speaker turn (whether Bull or Bear).
+- **Exit condition:** when `count >= 2 * max_debate_rounds`, stop the debate and run the Synthesis prompt.
+- **Speaker rotation:** if the previous turn was Bull, the next speaker is **Bear**; otherwise **Bull**. The very first turn is Bull. Each later Bull/Bear turn must reference the *immediately preceding* counter-argument by its first sentence — this is what forces engagement instead of parallel monologues.
+- **Synthesis is not counted.** It runs exactly once, after the loop exits.
+- **Default escalation:** raise `max_debate_rounds` to `2` when the first round produced two strong, evidence-balanced cases that did not engage with each other (i.e. when the bull/bear arguments are about *different* things). Don't escalate past `3` — beyond that, returns diminish and `Hold` becomes the path of least resistance, which is exactly what we're trying to avoid.
+
+Auditing the loop (optional but recommended for substantial reports): log each turn to the per-task scratchpad with the `debate_turn` entry type so the round shape can be replayed later.
+
+```bash
+python <skill-dir>/scripts/dexter_scratchpad.py add <scratchpad.jsonl> debate_turn \
+  speaker=Bull round=1 turn=1 argument="<paragraph>"
+
+python <skill-dir>/scripts/dexter_scratchpad.py add <scratchpad.jsonl> debate_turn \
+  speaker=Bear round=1 turn=2 argument="<paragraph>"
+
+# loop exits because count (2) >= 2 * max_debate_rounds (1) → run Synthesis prompt
+```
+
 ---
 
 ## Prompt 1 — Bull Analyst
