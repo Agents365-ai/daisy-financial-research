@@ -52,6 +52,41 @@ python <skill-dir>/scripts/dexter_scratchpad.py add <scratchpad.jsonl> debate_tu
 # loop exits because count (3) >= 3 * max_risk_discuss_rounds (1) → run Portfolio Manager
 ```
 
+### Programmatic loop driver
+
+Use `scripts/debate_runner.py --type risk` to enforce the three-speaker rotation and exit condition. The risk layer needs the prior research synthesis as input — pass its text via `--prior-synthesis-file`.
+
+```bash
+python <skill-dir>/scripts/debate_runner.py init \
+  --type risk --ticker 600519.SH \
+  --pad <scratchpad.jsonl> \
+  --context-file <ctx.json> \
+  --prior-synthesis-file <prior_synth.txt> \
+  --max-rounds 1
+# → first prompt is Aggressive
+
+python <skill-dir>/scripts/debate_runner.py next \
+  --pad <scratchpad.jsonl> --debate-id dbg_... \
+  --argument-file <aggressive-argument.txt>
+# → next prompt is Conservative (with aggressive argument inlined)
+
+python <skill-dir>/scripts/debate_runner.py next \
+  --pad <scratchpad.jsonl> --debate-id dbg_... \
+  --argument-file <conservative-argument.txt>
+# → next prompt is Neutral (sees both aggressive + conservative arguments)
+
+python <skill-dir>/scripts/debate_runner.py next \
+  --pad <scratchpad.jsonl> --debate-id dbg_... \
+  --argument-file <neutral-argument.txt>
+# → next_action: synthesize
+
+python <skill-dir>/scripts/debate_runner.py synthesize \
+  --pad <scratchpad.jsonl> --debate-id dbg_...
+# → Portfolio Manager prompt with the full debate inlined
+```
+
+`--prior-synthesis-file` is mandatory for `--type risk` (every risk-layer prompt has the `{prior_synthesis}` placeholder). The agent still drives the loop directly — the script is the referee, not the driver.
+
 ---
 
 ## Prompt 1 — Aggressive Risk Analyst

@@ -49,6 +49,39 @@ python <skill-dir>/scripts/dexter_scratchpad.py add <scratchpad.jsonl> debate_tu
 # loop exits because count (2) >= 2 * max_debate_rounds (1) → run Synthesis prompt
 ```
 
+### Programmatic loop driver
+
+Instead of hand-tracking the rotation, use `scripts/debate_runner.py` to enforce the state machine. The script never calls an LLM — it renders the right prompt next, records each turn into the scratchpad, and signals when to switch to synthesis.
+
+```bash
+# Start the debate; the script returns the rendered Bull prompt
+python <skill-dir>/scripts/debate_runner.py init \
+  --type research --ticker 600519.SH \
+  --pad <scratchpad.jsonl> \
+  --context-file <ctx.json> \
+  --max-rounds 1
+# → {"data": {"debate_id": "dbg_...", "next_action": "speak", "speaker": "Bull", "prompt": "..."}}
+
+# Bull spoke; record the bull turn (the script returns the next-step Bear prompt
+# pre-filled with the just-recorded bull argument)
+python <skill-dir>/scripts/debate_runner.py next \
+  --pad <scratchpad.jsonl> --debate-id dbg_... \
+  --argument-file <bull-argument.txt>
+# → {"data": {"next_action": "speak", "speaker": "Bear", "prompt": "..."}}
+
+# Bear spoke; record the bear turn. With max_rounds=1 the bound is reached.
+python <skill-dir>/scripts/debate_runner.py next \
+  --pad <scratchpad.jsonl> --debate-id dbg_... \
+  --argument-file <bear-argument.txt>
+# → {"data": {"next_action": "synthesize", "speaker": null, "prompt": ""}}
+
+python <skill-dir>/scripts/debate_runner.py synthesize \
+  --pad <scratchpad.jsonl> --debate-id dbg_...
+# → {"data": {"next_action": "done", "speaker": "ResearchManager", "prompt": "..."}}
+```
+
+`--context-file` is a JSON object whose keys are the placeholder names (`market_data`, `fundamentals`, `news`, `sector_context`, `past_context`); missing keys are filled with `_(not provided)_`. The agent still drives the loop directly — the script is the referee, not the driver.
+
 ---
 
 ## Prompt 1 — Bull Analyst
