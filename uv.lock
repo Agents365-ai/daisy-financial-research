@@ -283,7 +283,7 @@ wheels = [
 
 [[package]]
 name = "daisy-financial-research"
-version = "2.5.0"
+version = "2.6.0"
 source = { virtual = "." }
 dependencies = [
     { name = "numpy" },
