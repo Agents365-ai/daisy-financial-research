@@ -16,6 +16,12 @@ Design borrows from `virattt/dexter` — iterative agent loop (plan → gather �
 - **AKShare HK fallback** (v2.3.0+): closes the documented `pro.hk_daily_basic` Tushare gap with PE/PB/PS snapshots and ROE/EPS/BPS time series — no Tushare token, lazy-imported.
 - **Borrowed prompt library** (v2.4.0+): five reference docs adapted from TradingAgents — Bull / Bear / Synthesis debate, Aggressive / Conservative / Neutral risk debate, reflection prompt, decision schema, China-market analyst framing, technical-indicator cheatsheet. See `references/`.
 - **Auto-resolve workflow** (v2.5.0+): `dexter_memory_log.py auto-resolve` fetches `close[decision_date]` and `close[as_of_date]` for the ticker plus the right benchmark (CSI 300 for `*.SH/SZ/BJ`, HSI for `*.HK` with AKShare Sina fallback, SPY for US via yfinance), computes raw + alpha + holding days, then resolves the pending memory-log entry in one call.
+- **Technical indicators + decision-level backtest + tighter agent loop** (v2.6.0+):
+  - `scripts/technical_indicators.py` — point-in-time SMA / EMA / MACD / RSI / Bollinger / ATR / VWMA via `stockstats`, with a strict look-ahead-bias guard (rows with `Date > --as-of` are dropped before computation). Auto-routes by ts_code suffix to `pro.daily` / `pro.hk_daily` / `yfinance.download`.
+  - `references/data-source-routing.md` — canonical (market × data type) routing table consolidating A-share / HK / US primary calls and documented fallback chains. `references/hk-ticker-name.json` is a curated 5-digit → Chinese-name dict for ~30 HK majors; `akshare_hk_valuation.py name --ts-code <code>` is a zero-API local lookup.
+  - `dexter_memory_log.py backtest` — risk-adjusted decision-level metrics over a `--from` / `--to` window: per-rating mean alpha, hit rate, `alpha_t_stat`, `annualized_alpha_pct`, Sortino-flavored ratio, plus the cumulative-alpha curve and its max drawdown. Deliberately not called Sharpe — the log records discrete decisions, not a continuous NAV.
+  - `dexter_memory_log.py record --rating` now tolerates LLM-formatted input — accepts a canonical word, a markdown bold tag (`**Rating**: Buy`), or a full Portfolio Manager synthesis paragraph; rejects input with no 5-tier word loudly instead of silently defaulting to Hold.
+  - `dexter_scratchpad.py can-call <pad> <tool> <query>` — soft loop-limit + similarity guard ported from `virattt/dexter`. Always allows (returns `allowed: true`) but emits a warning when the same tool has already been called >= `--max-calls` times in the pad, or when the new query is textually similar to a prior call (stdlib `difflib`, no embedding deps).
 - Plan-first workflow with JSONL scratchpad recording every tool call, params, result, assumption.
 - DCF valuation with sensitivity matrix and sanity checks.
 - Bank / financial-sector valuation override (RoTE / CET1 / NIM / P/B / payout) instead of forcing DCF on the wrong frame.
@@ -77,7 +83,7 @@ All output lands under `./financial-research/{reports,watchlists,scratchpad,univ
 
 ## Agent-native CLI
 
-Every script under `scripts/` follows a uniform contract designed for both humans at a terminal and agents calling via subprocess. Same shape, six scripts:
+Every script under `scripts/` follows a uniform contract designed for both humans at a terminal and agents calling via subprocess. Same shape, eight scripts:
 
 ```bash
 # Discover the script's parameter and output schema (preferred over --help for agents)
@@ -118,13 +124,14 @@ DAISY_FORCE_JSON=1 python <skill-dir>/scripts/screen_a_share.py --preset a_value
 
 | Script | Default subdir | Purpose |
 |---|---|---|
-| `dexter_scratchpad.py` | `./financial-research/scratchpad/` | Per-task JSONL of tool calls, params, results, assumptions |
-| `dexter_memory_log.py` | `./financial-research/memory/` | Cross-session decision log; `pending → resolved` lifecycle. Subcommands include `auto-resolve` (v2.5.0+) which fetches close prices and benchmark, computes raw + alpha, and persists the resolution in one call |
+| `dexter_scratchpad.py` | `./financial-research/scratchpad/` | Per-task JSONL of tool calls, params, results, assumptions. v2.6.0+ adds `can-call` for soft loop-limit + similarity guard before each tool call |
+| `dexter_memory_log.py` | `./financial-research/memory/` | Cross-session decision log; `pending → resolved` lifecycle. Subcommands include `auto-resolve` (v2.5.0+) which fetches close prices and benchmark, computes raw + alpha, and persists the resolution in one call. v2.6.0+ adds `backtest` (per-rating alpha t-stat / annualized alpha / Sortino-flavored / cumulative-alpha drawdown) and tolerant `record --rating` extraction |
 | `financial_report.py` | `./financial-research/reports/` | Markdown → HTML → optional PDF report renderer |
 | `screen_a_share.py` | `./financial-research/watchlists/` (+ `reports/` with `--report`) | A-share multi-factor screener (presets) |
 | `screen_hk_connect.py` | `./financial-research/watchlists/` | HK Stock Connect screener (only when 港股通 explicitly requested) |
 | `hk_connect_universe.py` | `./financial-research/universes/` | Southbound Stock Connect universe export |
-| `akshare_hk_valuation.py` | (read-only) | HK PE/PB/PS + ROE/EPS via AKShare — closes `pro.hk_daily_basic` gap |
+| `akshare_hk_valuation.py` | (read-only) | HK PE/PB/PS + ROE/EPS via AKShare — closes `pro.hk_daily_basic` gap. v2.6.0+ adds `name` subcommand for zero-API local-dict ticker → Chinese-name lookup |
+| `technical_indicators.py` (v2.6.0+) | (read-only) | Point-in-time SMA/EMA/MACD/RSI/Bollinger/ATR/VWMA via `stockstats`, with look-ahead-bias guard. Auto-routes A-share/HK/US |
 
 Every script accepts `--out-dir <root>` to override the root; the subdir is appended automatically.
 
@@ -137,7 +144,8 @@ Every script accepts `--out-dir <root>` to override the root; the subdir is appe
 ```bash
 uv sync                  # core: tushare / pandas / numpy / requests
 uv sync --extra akshare  # also: akshare (HK valuation + HSI benchmark fallback)
-uv sync --extra us       # also: yfinance (US tickers in auto-resolve)
+uv sync --extra us       # also: yfinance (US tickers in auto-resolve / technical_indicators)
+uv sync --extra ta       # also: stockstats (technical_indicators.py)
 uv sync --all-extras     # everything
 ```
 
@@ -163,11 +171,15 @@ cd <skill-dir> && git pull
 | Multi-preset stock screening | No | Yes (`a_dividend_quality`, `a_value`, HK Connect) |
 | Three-layer report (md+html+pdf) | Manual | One command |
 | HK Connect universe export | No | Yes (with date back-fill) |
-| Soft loop limits + repeat-query detection | No | Yes (prevents runaway tool use) |
-| Bull / bear / risk debate prompts | No | `references/debate-prompts.md`, `references/risk-debate-prompts.md` |
+| Soft loop limits + repeat-query detection | No | `dexter_scratchpad.py can-call` (count + `difflib`-based similarity warning before each tool call) |
+| Bull / bear / risk debate prompts | No | `references/debate-prompts.md`, `references/risk-debate-prompts.md` (with explicit Loop spec for round-counter exit) |
 | Decision schema (5-tier rating + markdown render contract) | No | `references/decision-schema.md` |
+| Tolerant rating extraction from PM synthesis output | No | `dexter_memory_log.py record --rating "**Rating**: Buy ..."` (rejects no-rating input loudly instead of silent Hold) |
 | China-market analyst framing | No | `references/cn-market-analyst-prompts.md` |
 | Auto-resolve memory log (fetch close + benchmark, compute alpha) | No | `dexter_memory_log.py auto-resolve` |
+| Aggregate decision-level backtest (alpha t-stat, annualized alpha, Sortino-flavored, cum-alpha drawdown) | No | `dexter_memory_log.py backtest --from --to --rating` |
+| Point-in-time technical indicators with look-ahead-bias guard | Manual | `scripts/technical_indicators.py` (auto-routes A-share / HK / US) |
+| Per-market data-source routing reference (primary + documented fallback chain) | No | `references/data-source-routing.md` + `references/hk-ticker-name.json` |
 
 ## Disclaimer
 

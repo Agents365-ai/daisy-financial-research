@@ -16,6 +16,12 @@
 - **AKShare 港股兜底** (v2.3.0+)：填补 daisy 在 CLAUDE.md 已记录的 Tushare gap (`pro.hk_daily_basic` 在本环境返回 `请指定正确的接口名`)，提供 PE/PB/PS 快照与 ROE/EPS/BPS 时间序列，无需 Tushare token，懒加载。
 - **Prompt 模板库** (v2.4.0+)：从 TradingAgents 借鉴的 5 份 prompt 文档 — 多空 / 多空辩论 + 综合，激进 / 保守 / 中立风险辩论，反思 prompt，决策 schema，A 股/港股市场分析框架，技术指标 cheatsheet。详见 `references/`。
 - **Auto-resolve 工作流** (v2.5.0+)：`dexter_memory_log.py auto-resolve` 自动取价（决策日 + as-of 日）+ 取对应基准（A 股 → CSI 300，港股 → HSI 经 AKShare Sina 兜底，美股 → SPY 经 yfinance），算 raw / alpha / 持仓天数，并一步完成 pending 条目的 resolve。
+- **技术指标 + 决策级回测 + agent 循环加固** (v2.6.0+)：
+  - `scripts/technical_indicators.py` — 通过 `stockstats` 计算 SMA / EMA / MACD / RSI / Bollinger / ATR / VWMA，**内置 look-ahead-bias 守卫**：所有 `Date > --as-of` 的行在 stockstats 之前就被裁掉。按 ts_code 后缀自动路由到 `pro.daily` / `pro.hk_daily` / `yfinance.download`。
+  - `references/data-source-routing.md` — 三市场（A 股 / 港 / 美）×多数据类型的统一路由表，主源 + 兜底链一目了然。`references/hk-ticker-name.json` 是 ~30 个港股核心标的的 5 位代码 → 中文名字典；`akshare_hk_valuation.py name --ts-code <code>` 是零 API 调用的本地查询子命令。
+  - `dexter_memory_log.py backtest` — 给定 `--from / --to` 窗口对已 resolve 的条目做风险调整聚合：每 rating 桶的均值 alpha、命中率、`alpha_t_stat`、`annualized_alpha_pct`、Sortino-flavored 比率，以及累计 alpha 曲线和它的最大回撤。**故意不叫 Sharpe** —— 日志记的是离散决策不是连续 NAV，命名上就把这点说清楚。
+  - `dexter_memory_log.py record --rating` 现在容错 LLM 输出 —— 接受规范单词、markdown 粗体（`**Rating**: Buy`）或整段 Portfolio Manager synthesis 段落；遇到完全没有 5 档评级词的输入会**显式拒绝**而不是静默落到 Hold。
+  - `dexter_scratchpad.py can-call <pad> <tool> <query>` — 移植自 `virattt/dexter` 的软循环上限 + 相似度去重。永远返回 `allowed: true`（软警告而非硬阻断），但当同一个工具已被调用 ≥ `--max-calls` 次或新查询和已记录的某次调用文本相似时会发出 warning（标准库 `difflib`，无 embedding 依赖）。
 - 计划先行 + JSONL scratchpad，记录每次工具调用、参数、结果、假设。
 - DCF 估值 + 敏感性矩阵 + 合理性校验。
 - 银行/金融板块估值替代框架 (RoTE / CET1 / NIM / P/B / 派息率)。
@@ -77,7 +83,7 @@ python <skill-dir>/scripts/financial_report.py ./financial-research/reports/<TIM
 
 ## Agent-native CLI
 
-`scripts/` 下所有脚本遵循统一契约，同时服务终端用户和通过 subprocess 调用的 agent。六个脚本同样的形状：
+`scripts/` 下所有脚本遵循统一契约，同时服务终端用户和通过 subprocess 调用的 agent。八个脚本同样的形状：
 
 ```bash
 # 内省脚本的参数和输出 schema (agent 应优先用这个，而不是解析 --help)
@@ -118,13 +124,14 @@ DAISY_FORCE_JSON=1 python <skill-dir>/scripts/screen_a_share.py --preset a_value
 
 | 脚本 | 默认子目录 | 用途 |
 |---|---|---|
-| `dexter_scratchpad.py` | `./financial-research/scratchpad/` | 单任务 JSONL，记录工具调用/参数/结果/假设 |
-| `dexter_memory_log.py` | `./financial-research/memory/` | 跨会话决策日志，`pending → resolved` 生命周期。v2.5.0+ 新增 `auto-resolve` 子命令，自动取价 + 取基准 + 算超额收益，一步完成解析 |
+| `dexter_scratchpad.py` | `./financial-research/scratchpad/` | 单任务 JSONL，记录工具调用/参数/结果/假设。v2.6.0+ 新增 `can-call` 子命令，工具调用前做软循环上限 + 相似度去重 |
+| `dexter_memory_log.py` | `./financial-research/memory/` | 跨会话决策日志，`pending → resolved` 生命周期。v2.5.0+ 新增 `auto-resolve` 子命令，自动取价 + 取基准 + 算超额收益，一步完成解析。v2.6.0+ 新增 `backtest`（每 rating 桶的 alpha t-stat / 年化 alpha / Sortino-flavored / 累计 alpha 回撤）和 `record --rating` 容错抽取 |
 | `financial_report.py` | `./financial-research/reports/` | Markdown → HTML → 可选 PDF 报告渲染 |
 | `screen_a_share.py` | `./financial-research/watchlists/` (`--report` 时 + `reports/`) | A 股多因子筛选 (预设驱动) |
 | `screen_hk_connect.py` | `./financial-research/watchlists/` | 港股通筛选 (仅在用户明确要求 港股通 时使用) |
 | `hk_connect_universe.py` | `./financial-research/universes/` | 南向港股通 universe 导出 |
-| `akshare_hk_valuation.py` | (只读) | 用 AKShare 取港股 PE/PB/PS + ROE/EPS — 填补 `pro.hk_daily_basic` gap |
+| `akshare_hk_valuation.py` | (只读) | 用 AKShare 取港股 PE/PB/PS + ROE/EPS — 填补 `pro.hk_daily_basic` gap。v2.6.0+ 新增 `name` 子命令（零 API 调用的本地字典 ticker → 中文名查询）|
+| `technical_indicators.py` (v2.6.0+) | (只读) | 通过 `stockstats` 计算 SMA/EMA/MACD/RSI/Bollinger/ATR/VWMA，含 look-ahead-bias 守卫。自动路由 A 股 / 港 / 美 |
 
 任何脚本都接受 `--out-dir <root>` 来自定义根目录，子目录会自动追加。
 
@@ -137,7 +144,8 @@ DAISY_FORCE_JSON=1 python <skill-dir>/scripts/screen_a_share.py --preset a_value
 ```bash
 uv sync                  # 核心: tushare / pandas / numpy / requests
 uv sync --extra akshare  # 加上: akshare (港股估值 + HSI 基准回退)
-uv sync --extra us       # 加上: yfinance (auto-resolve 处理美股 ticker)
+uv sync --extra us       # 加上: yfinance (auto-resolve / technical_indicators 处理美股 ticker)
+uv sync --extra ta       # 加上: stockstats (technical_indicators.py)
 uv sync --all-extras     # 全部装上
 ```
 
@@ -163,11 +171,15 @@ cd <skill-dir> && git pull
 | 多预设股票筛选 | 否 | 是 (`a_dividend_quality` / `a_value` / 港股通) |
 | 三层报告 (md+html+pdf) | 需手写 | 一行命令产出 |
 | 港股通 universe 导出 | 否 | 是 (向后回填日期) |
-| 软循环上限 + 重复查询检测 | 否 | 是 (避免工具调用失控) |
-| 多空 / 风险辩论 prompt 模板 | 否 | `references/debate-prompts.md`, `references/risk-debate-prompts.md` |
+| 软循环上限 + 重复查询检测 | 否 | `dexter_scratchpad.py can-call`（计数 + `difflib` 相似度，调用前先警告）|
+| 多空 / 风险辩论 prompt 模板 | 否 | `references/debate-prompts.md`, `references/risk-debate-prompts.md`（含明确的轮次状态机 Loop spec）|
 | 决策 schema (5 档评级 + Markdown 输出契约) | 否 | `references/decision-schema.md` |
+| 容错从 PM synthesis 中抽取 rating | 否 | `dexter_memory_log.py record --rating "**Rating**: Buy ..."`（无 rating 词时显式拒绝，不静默落 Hold）|
 | A 股 / 港股市场分析师 prompt | 否 | `references/cn-market-analyst-prompts.md` |
 | 自动 resolve 决策日志 (取价 + 取基准 + 算 alpha) | 否 | `dexter_memory_log.py auto-resolve` |
+| 决策级聚合回测（alpha t-stat、年化 alpha、Sortino-flavored、累计 alpha 回撤）| 否 | `dexter_memory_log.py backtest --from --to --rating` |
+| 时点安全的技术指标（look-ahead-bias 守卫）| 需手写 | `scripts/technical_indicators.py`（自动路由 A 股 / 港 / 美）|
+| 三市场数据源路由参考（主源 + 兜底链）| 否 | `references/data-source-routing.md` + `references/hk-ticker-name.json` |
 
 ## 免责声明
 
