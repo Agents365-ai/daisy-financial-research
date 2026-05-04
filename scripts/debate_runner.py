@@ -24,15 +24,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).parent))
-from _envelope import (  # noqa: E402
+from _envelope import (
     ExitCode,
     Timer,
     add_common_args,
@@ -222,15 +219,33 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "schema", False):
         return emit_schema(SCHEMA, fmt, timer=timer)
     if not args.cmd:
-        parser.print_help(sys.stderr)
-        return ExitCode.VALIDATION
+        return emit_failure(
+            ExitCode.VALIDATION,
+            "missing subcommand: choose one of init / next / synthesize",
+            fmt,
+            code="validation_error",
+            retryable=False,
+            context={"valid_subcommands": ["init", "next", "synthesize"]},
+            timer=timer,
+        )
     handlers = {
         "init": _cmd_init,
         "next": _cmd_next,
         "synthesize": _cmd_synthesize,
     }
-    return handlers[args.cmd](args, fmt, timer)
+    try:
+        return handlers[args.cmd](args, fmt, timer)
+    except Exception as e:
+        return emit_failure(
+            ExitCode.RUNTIME,
+            f"{type(e).__name__}: {e}",
+            fmt,
+            code="runtime_error",
+            retryable=False,
+            context={"subcommand": args.cmd},
+            timer=timer,
+        )
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
