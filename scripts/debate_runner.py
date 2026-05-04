@@ -757,8 +757,92 @@ def _cmd_next(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
     return emit_success(next_data, fmt, timer=timer)
 
 
+def _build_synthesis_vars(state: _State, ctx: dict) -> dict:
+    """Variable bag for rendering a synthesis prompt.
+
+    Concatenates all per-role arguments separated by '\\n\\n' so multi-round
+    debates are visible in full.
+    """
+    vars_ = dict(ctx)
+    vars_["ticker"] = state.init["ticker"]
+    if state.debate_type == "risk":
+        prior_path = state.init.get("prior_synthesis_file_path")
+        if prior_path:
+            try:
+                vars_["prior_synthesis"] = _read_text_file(Path(prior_path))
+            except OSError:
+                vars_["prior_synthesis"] = "_(not provided)_"
+
+    by_role = {}
+    for t in state.turns:
+        by_role.setdefault(t.speaker, []).append(t.argument)
+
+    if state.debate_type == "research":
+        vars_["bull_argument"] = "\n\n".join(by_role.get("Bull", [])) or "_(not provided)_"
+        vars_["bear_argument"] = "\n\n".join(by_role.get("Bear", [])) or "_(not provided)_"
+    elif state.debate_type == "risk":
+        vars_["aggressive_argument"]   = "\n\n".join(by_role.get("Aggressive",   [])) or "_(not provided)_"
+        vars_["conservative_argument"] = "\n\n".join(by_role.get("Conservative", [])) or "_(not provided)_"
+        vars_["neutral_argument"]      = "\n\n".join(by_role.get("Neutral",      [])) or "_(not provided)_"
+    return vars_
+
+
 def _cmd_synthesize(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
-    raise NotImplementedError("Task 6")
+    pad = Path(args.pad)
+    state, err = _replay_state(pad, args.debate_id)
+    if err is not None:
+        exit_code, code, ctx = err
+        return emit_failure(exit_code, code.replace("_", " "), fmt,
+                            code=code, context=ctx, timer=timer)
+    if state.synthesized:
+        return emit_failure(ExitCode.VALIDATION, "debate already synthesized", fmt,
+                            code="debate_already_synthesized",
+                            context={"debate_id": args.debate_id}, timer=timer)
+    if len(state.turns) < state.bound:
+        return emit_failure(ExitCode.VALIDATION,
+                            "debate not ready for synthesis", fmt,
+                            code="debate_not_ready_for_synthesis", context={
+                                "debate_id": args.debate_id,
+                                "current_turn": len(state.turns),
+                                "required_turn": state.bound,
+                            }, timer=timer)
+
+    ctx_path = Path(state.init["context_file_path"])
+    if not ctx_path.exists():
+        return emit_failure(ExitCode.VALIDATION, "context file missing", fmt,
+                            code="context_file_missing",
+                            context={"path": str(ctx_path)}, timer=timer)
+    ctx_obj = json.loads(_read_text_file(ctx_path))
+
+    speaker = SYNTH_SPEAKER[state.debate_type]
+    vars_ = _build_synthesis_vars(state, ctx_obj)
+    prompt = _render_prompt(speaker, vars_)
+
+    final_round = state.round_for_turn(state.bound)
+    data = {
+        "debate_id": args.debate_id,
+        "next_action": "done",
+        "speaker": speaker,
+        "round": final_round,
+        "turn": state.bound,
+        "prompt": prompt,
+    }
+
+    if args.dry_run:
+        return emit_success(data, fmt, timer=timer, meta_extra={"dry_run": True})
+
+    synth_record = {
+        "ts": _now_iso_z(),
+        "type": "debate_synthesis",
+        "debate_id": args.debate_id,
+        "synthesis_prompt_rendered": True,
+    }
+    write_err = _append_pad(pad, synth_record)
+    if write_err is not None:
+        return emit_failure(write_err, "failed to append synthesis record", fmt,
+                            code="pad_write_failed", retryable=True,
+                            context={"path": str(pad)}, timer=timer)
+    return emit_success(data, fmt, timer=timer)
 
 
 def main(argv: list[str] | None = None) -> int:
