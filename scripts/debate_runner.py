@@ -178,6 +178,7 @@ Resources you have:
 - News and catalysts: {news}
 - Sector context: {sector_context}
 - Past calls on this ticker (from the cross-session memory log): {past_context}
+- Most recent bear argument to engage with (empty on the very first turn): {bear_argument}
 
 Deliver the bull argument now.""",
     "research.bear": """\
@@ -541,6 +542,8 @@ def _build_speaker_vars_for_speaker_turn(state: _State, ctx: dict, speaker: str)
     if state.debate_type == "research":
         if speaker == "Bear":
             vars_["bull_argument"] = last_by_role.get("Bull", "_(not yet spoken)_")
+        elif speaker == "Bull":
+            vars_["bear_argument"] = last_by_role.get("Bear", "_(not yet spoken)_")
     elif state.debate_type == "risk":
         if speaker == "Aggressive":
             vars_["conservative_response"] = last_by_role.get("Conservative", "_(not yet spoken)_")
@@ -637,6 +640,8 @@ def _cmd_init(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
     vars_ = {**ctx_obj, "ticker": args.ticker}
     if prior_text is not None:
         vars_["prior_synthesis"] = prior_text
+    if args.type == "research":
+        vars_.setdefault("bear_argument", "_(not yet spoken)_")
     if args.type == "risk":
         vars_.setdefault("conservative_response", "_(not yet spoken)_")
         vars_.setdefault("neutral_response", "_(not yet spoken)_")

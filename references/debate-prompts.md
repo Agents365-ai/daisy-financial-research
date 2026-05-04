@@ -104,6 +104,7 @@ Resources you have:
 - News and catalysts: {news}
 - Sector context: {sector_context}
 - Past calls on this ticker (from the cross-session memory log): {past_context}
+- Most recent bear argument to engage with (empty on the very first turn): {bear_argument}
 
 Deliver the bull argument now.
 ```
