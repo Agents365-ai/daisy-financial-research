@@ -62,6 +62,38 @@ DEFAULT_LOG_FILENAME = "decision-log.md"
 SEPARATOR = "\n\n<!-- ENTRY_END -->\n\n"
 
 RATINGS = ["Buy", "Overweight", "Hold", "Underweight", "Sell"]
+_RATING_SET = {r.lower() for r in RATINGS}
+# Matches 'Rating: X', 'rating - X', 'Rating: **X**' — tolerant of markdown
+# bold wrappers and either a colon or hyphen separator.
+# Ported from TauricResearch/TradingAgents:tradingagents/agents/utils/rating.py.
+_RATING_LABEL_RE = re.compile(r"rating.*?[:\-][\s*]*(\w+)", re.IGNORECASE)
+
+
+def parse_rating(text: str) -> str | None:
+    """Heuristically extract a 5-tier rating from free-form text.
+
+    Two-pass strategy (ported from TradingAgents agents/utils/rating.py):
+      1. Look for an explicit 'Rating:' / 'rating -' label, tolerant of
+         markdown bold wrappers (**Buy**) and case.
+      2. Fall back to the first standalone 5-tier word found in any line.
+
+    Returns the canonical Title-case rating or None if none found.
+    Use over a strict ``rating in RATINGS`` check whenever the input may
+    be an LLM synthesis output rather than a hand-crafted CLI value.
+    """
+    if not text:
+        return None
+    for line in text.splitlines():
+        m = _RATING_LABEL_RE.search(line)
+        if m and m.group(1).lower() in _RATING_SET:
+            return m.group(1).capitalize()
+    for line in text.splitlines():
+        for word in line.lower().split():
+            clean = word.strip("*:.,()[]\"'")
+            if clean in _RATING_SET:
+                return clean.capitalize()
+    return None
+
 
 DECISION_RE = re.compile(r"DECISION:\n(.*?)(?=\nREFLECTION:|\Z)", re.DOTALL)
 REFLECTION_RE = re.compile(r"REFLECTION:\n(.*?)$", re.DOTALL)
@@ -74,13 +106,25 @@ SCHEMA = {
             "description": "Append a new pending entry. Idempotent on (date, ticker).",
             "params": {
                 "ticker": {"type": "string", "required": True, "example": "600519.SH"},
-                "rating": {"type": "string", "enum": RATINGS, "required": True},
+                "rating": {
+                    "type": "string", "required": True, "canonical_enum": RATINGS,
+                    "description": ("Accepts any canonical 5-tier word OR a longer "
+                                    "text (e.g. a Portfolio Manager synthesis "
+                                    "output) — heuristic extraction handles "
+                                    "markdown bold and case variation; rejects "
+                                    "input that contains no 5-tier word."),
+                },
                 "decision": {"type": "string", "required": True, "description": "Thesis / reasoning text"},
                 "date": {"type": "string", "format": "YYYY-MM-DD or YYYYMMDD", "default": "today"},
                 "log": {"type": "string", "description": "Override default log path"},
                 "out_dir": {"type": "string", "default": "./financial-research"},
             },
-            "returns": {"path": "log path", "entry_added": "bool", "skipped_reason": "duplicate or null"},
+            "returns": {
+                "path": "log path", "entry_added": "bool",
+                "skipped_reason": "duplicate or null",
+                "rating": "canonical Title-case rating actually written",
+                "rating_extracted_from_text": "true when --rating was longer than a single word",
+            },
         },
         "resolve": {
             "description": "Mark a pending entry resolved with realized returns and a reflection.",
@@ -506,12 +550,26 @@ def cmd_record(args, fmt, timer, request_id) -> int:
                             code="validation_error", retryable=False,
                             context={"value": args.date}, timer=timer, request_id=request_id)
 
-    if args.rating not in RATINGS:
-        return emit_failure(ExitCode.VALIDATION,
-                            f"invalid rating: {args.rating!r} (expected one of {RATINGS})",
-                            fmt, code="validation_error", retryable=False,
-                            context={"value": args.rating, "allowed": RATINGS},
-                            timer=timer, request_id=request_id)
+    # Two-tier rating resolution:
+    #   1. exact canonical match — e.g. 'Buy'
+    #   2. heuristic extraction — handles 'buy' / '**Rating**: Sell' /
+    #      a full Portfolio Manager synthesis output pasted as one arg
+    raw_rating_input = args.rating
+    rating_extracted = False
+    if raw_rating_input in RATINGS:
+        rating = raw_rating_input
+    else:
+        extracted = parse_rating(raw_rating_input)
+        if extracted is None:
+            return emit_failure(ExitCode.VALIDATION,
+                                f"could not extract a 5-tier rating from {raw_rating_input!r}",
+                                fmt, code="validation_error", retryable=False,
+                                context={"value": raw_rating_input, "allowed": RATINGS,
+                                         "hint": "pass one of " + " / ".join(RATINGS) +
+                                                 " or text containing 'Rating: <one of those>'"},
+                                timer=timer, request_id=request_id)
+        rating = extracted
+        rating_extracted = True
 
     log = resolve_log_path(args.log, args.out_dir)
     pending_prefix = f"[{date} | {args.ticker} |"
@@ -527,13 +585,14 @@ def cmd_record(args, fmt, timer, request_id) -> int:
                 table_render=lambda: print(f"skipped (duplicate pending): {date} {args.ticker}"),
             )
 
-    tag = f"[{date} | {args.ticker} | {args.rating} | pending]"
+    tag = f"[{date} | {args.ticker} | {rating} | pending]"
     body = f"{tag}\n\nDECISION:\n{args.decision.strip()}"
 
     if args.dry_run:
         return emit_success(
             {"dry_run": True, "would_append_to": str(log),
-             "would_write_tag": tag, "decision_chars": len(args.decision)},
+             "would_write_tag": tag, "decision_chars": len(args.decision),
+             "rating": rating, "rating_extracted_from_text": rating_extracted},
             fmt, timer=timer, request_id=request_id,
             table_render=lambda: print(f"would_append: {tag} → {log}"),
         )
@@ -552,7 +611,8 @@ def cmd_record(args, fmt, timer, request_id) -> int:
 
     return emit_success(
         {"path": str(log), "entry_added": True, "skipped_reason": None,
-         "date": date, "ticker": args.ticker, "rating": args.rating, "tag": tag},
+         "date": date, "ticker": args.ticker, "rating": rating, "tag": tag,
+         "rating_extracted_from_text": rating_extracted},
         fmt, timer=timer, request_id=request_id,
         table_render=lambda: print(f"recorded: {tag} → {log}"),
     )
@@ -1308,7 +1368,11 @@ def main() -> int:
 
     p_rec = sub.add_parser("record", help="Append a new pending entry")
     p_rec.add_argument("--ticker", required=True)
-    p_rec.add_argument("--rating", required=True, choices=RATINGS)
+    p_rec.add_argument("--rating", required=True,
+                       help=("One of " + " / ".join(RATINGS) + ", or any text "
+                             "containing such a word (e.g. a Portfolio Manager "
+                             "synthesis output) — extracted via the heuristic "
+                             "ported from TradingAgents agents/utils/rating.py"))
     p_rec.add_argument("--decision", required=True, help="Thesis / reasoning text")
     p_rec.add_argument("--date", help="YYYY-MM-DD or YYYYMMDD; default today")
     _shared(p_rec)

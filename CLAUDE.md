@@ -62,10 +62,10 @@ When adding a new script: import from `_envelope`, define a `SCHEMA` dict, call 
 
 ```bash
 uv sync --all-extras
-uv run pytest tests/        # 69 tests, ~11 s, no Tushare token, no network
+uv run pytest tests/        # 74 tests, ~11 s, no Tushare token, no network
 ```
 
-Coverage: `--help` / `--schema` / `--dry-run` invariants across all 8 scripts, validation/no_data error envelopes, `DAISY_FORCE_JSON` override, full memory-log lifecycle (record idempotency → resolve atomic rewrite → list/context/stats/backtest), on-disk format wire-compatibility with TradingAgents `memory.py`, plus `compute-returns` / `auto-resolve` dry-run + validation paths, `technical_indicators` market-routing dry-run, `akshare_hk_valuation name` local-dict lookup, and `backtest` aggregate math (mean alpha, hit rate, t-stat, annualized alpha, cumulative-alpha drawdown, window/rating filters). See `tests/README.md`. Run before committing any change to `scripts/`.
+Coverage: `--help` / `--schema` / `--dry-run` invariants across all 8 scripts, validation/no_data error envelopes, `DAISY_FORCE_JSON` override, full memory-log lifecycle (record idempotency → resolve atomic rewrite → list/context/stats/backtest), on-disk format wire-compatibility with TradingAgents `memory.py`, plus `compute-returns` / `auto-resolve` dry-run + validation paths, `technical_indicators` market-routing dry-run, `akshare_hk_valuation name` local-dict lookup, `backtest` aggregate math (mean alpha, hit rate, t-stat, annualized alpha, cumulative-alpha drawdown, window/rating filters), and `record --rating` tolerant extraction (canonical word, markdown bold, lowercase, full synthesis paragraph, plus rejection of input with no 5-tier word). See `tests/README.md`. Run before committing any change to `scripts/`.
 
 ## Tushare gotchas (verified in this env)
 
