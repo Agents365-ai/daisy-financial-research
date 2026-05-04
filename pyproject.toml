@@ -11,7 +11,7 @@
 #   uv sync --all-extras       # everything
 [project]
 name = "daisy-financial-research"
-version = "2.6.0"
+version = "2.7.0"
 description = "Multi-platform agent skill for stock / company / sector research"
 readme = "README.md"
 requires-python = ">=3.11"
