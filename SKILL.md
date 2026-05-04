@@ -244,6 +244,16 @@ Avoid repetitive tool calls:
 - Do not keep calling the same endpoint with near-identical parameters.
 - If data is incomplete, proceed with caveated analysis rather than fabricating.
 
+When the scratchpad helper is active, you can ask it to flag both failure modes before a tool call:
+
+```bash
+python <this-skill-dir>/scripts/dexter_scratchpad.py can-call \
+  <scratchpad.jsonl> tushare.daily 'ts_code=600519.SH start=20240101 end=20240630'
+# → {allowed: true, warning: null|string, current_count: int, similar_to: [...]}
+```
+
+`allowed` is always `true` (this is a *soft* warning, not a block). React to a non-null `warning`: if `current_count >= max_calls`, change endpoint; if `similar_to` is non-empty, the tool is about to repeat a recent call — adjust the query or skip.
+
 ### 5. Numerical validation checklist
 
 Before final answer, verify:
