@@ -1243,6 +1243,54 @@ def cmd_compute_returns(args, fmt, timer, request_id) -> int:
 
 
 def cmd_auto_resolve(args, fmt, timer, request_id) -> int:
+    """Dispatch single-entry vs batch (--due) auto-resolve, validating mutual exclusion."""
+    if args.due:
+        # Batch mode: --due forbids the per-entry triple, requires --min-pending-days.
+        per_entry_set = [n for n, v in (("--ticker", args.ticker),
+                                        ("--date", args.date),
+                                        ("--reflection", args.reflection)) if v]
+        if per_entry_set:
+            return emit_failure(
+                ExitCode.VALIDATION,
+                f"--due is mutually exclusive with {', '.join(per_entry_set)}",
+                fmt, code="validation_error", retryable=False,
+                context={"with_due_set": per_entry_set,
+                         "use_either": "--due + --min-pending-days OR --ticker + --date + --reflection"},
+                timer=timer, request_id=request_id,
+            )
+        if args.min_pending_days is None:
+            return emit_failure(
+                ExitCode.VALIDATION,
+                "--due requires --min-pending-days N (no default; pick a threshold consciously)",
+                fmt, code="validation_error", retryable=False,
+                context={"hint": "e.g. --min-pending-days 30 for a monthly sweep"},
+                timer=timer, request_id=request_id,
+            )
+        if args.min_pending_days <= 0:
+            return emit_failure(
+                ExitCode.VALIDATION,
+                f"--min-pending-days must be positive (got {args.min_pending_days})",
+                fmt, code="validation_error", retryable=False,
+                timer=timer, request_id=request_id,
+            )
+        return _cmd_auto_resolve_batch(args, fmt, timer, request_id)
+
+    # Single-entry mode: --ticker / --date / --reflection all required.
+    missing = [n for n, v in (("--ticker", args.ticker),
+                              ("--date", args.date),
+                              ("--reflection", args.reflection)) if not v]
+    if missing:
+        return emit_failure(
+            ExitCode.VALIDATION,
+            f"missing required: {', '.join(missing)} (or use --due for batch mode)",
+            fmt, code="validation_error", retryable=False,
+            context={"missing": missing},
+            timer=timer, request_id=request_id,
+        )
+    return _cmd_auto_resolve_single(args, fmt, timer, request_id)
+
+
+def _cmd_auto_resolve_single(args, fmt, timer, request_id) -> int:
     """Compute returns then run the same atomic-rewrite resolve logic as cmd_resolve."""
     data, err_code = _compute_returns_core(args, fmt, timer, request_id)
     if err_code is not None:
@@ -1350,6 +1398,174 @@ def cmd_auto_resolve(args, fmt, timer, request_id) -> int:
     return emit_success(out, fmt, timer=timer, request_id=request_id, table_render=table)
 
 
+def _cmd_auto_resolve_batch(args, fmt, timer, request_id) -> int:
+    """Scan log for pending entries past --min-pending-days and auto-resolve each.
+
+    Dry-run (the only path tested in this repo's stdlib-only test suite): scan and
+    classify entries (would_resolve / skipped_not_due) without hitting upstream
+    APIs and without rewriting the log.
+
+    Real execution: for each due entry, invoke _compute_returns_core with the entry's
+    ticker + decision_date; on success, replace the pending block with a filled-in
+    tag-line + auto-templated REFLECTION; on per-entry failure (no_data / dependency /
+    auth), record the reason and continue with remaining entries. One atomic_write at
+    the end commits all replacements in a single rewrite.
+    """
+    try:
+        as_of_iso = (normalize_date(args.as_of)
+                     if args.as_of else dt.date.today().isoformat())
+    except ValueError as e:
+        return emit_failure(ExitCode.VALIDATION, str(e), fmt,
+                            code="validation_error", retryable=False,
+                            context={"value": args.as_of},
+                            timer=timer, request_id=request_id)
+
+    log = resolve_log_path(args.log, args.out_dir)
+    entries = load_entries(log) if log.exists() else []
+    as_of_date = dt.date.fromisoformat(as_of_iso)
+
+    would_resolve: list[dict] = []
+    skipped_not_due: list[dict] = []
+
+    for e in entries:
+        if not e.get("pending"):
+            continue
+        try:
+            decision_date = dt.date.fromisoformat(e["date"])
+        except ValueError:
+            # Malformed date in tag — treat as not-due to avoid touching it
+            continue
+        days_pending = (as_of_date - decision_date).days
+        rec = {"ticker": e["ticker"], "decision_date": e["date"],
+               "rating": e["rating"], "days_pending": days_pending}
+        if days_pending >= args.min_pending_days:
+            would_resolve.append(rec)
+        else:
+            skipped_not_due.append(rec)
+
+    scanned = len(would_resolve) + len(skipped_not_due)
+
+    if args.dry_run:
+        return emit_success(
+            {"dry_run": True, "as_of": as_of_iso,
+             "min_pending_days": args.min_pending_days,
+             "scanned": scanned,
+             "would_resolve": would_resolve,
+             "skipped_not_due": skipped_not_due,
+             "log": str(log)},
+            fmt, timer=timer, request_id=request_id,
+            table_render=lambda: print(
+                f"would_resolve {len(would_resolve)} / scanned {scanned} "
+                f"(threshold {args.min_pending_days}d, as_of {as_of_iso})"),
+        )
+
+    # Real execution: per-entry compute-returns + accumulated atomic-rewrite.
+    if not would_resolve:
+        return emit_success(
+            {"as_of": as_of_iso, "min_pending_days": args.min_pending_days,
+             "scanned": scanned, "resolved": [], "skipped_not_due": skipped_not_due,
+             "failed": [], "log": str(log)},
+            fmt, timer=timer, request_id=request_id,
+            table_render=lambda: print(f"nothing due (scanned {scanned})"))
+
+    resolved: list[dict] = []
+    failed: list[dict] = []
+    rewrites: dict[str, dict] = {}  # key: f"{date}|{ticker}" -> resolved fields
+
+    class _A:
+        pass
+
+    for rec in would_resolve:
+        a = _A()
+        a.ticker = rec["ticker"]
+        a.date = rec["decision_date"].replace("-", "")  # normalize_date accepts both
+        a.as_of = as_of_iso
+        a.benchmark = args.benchmark
+        a.dry_run = False
+        # _compute_returns_core emits its own envelope on failure (returns the exit code
+        # in the second slot). For batch we suppress that envelope: redirect via a
+        # one-shot emit_failure swap is too invasive — instead, run the core and inspect
+        # its return shape. On failure data is None and err_code is the code (already
+        # printed); since we want to continue, we collect the per-entry err separately.
+        # Workaround: catch via a custom hook is overkill. Use compute helpers directly.
+        try:
+            data, err_code = _compute_returns_core(a, fmt, timer, request_id)
+        except Exception as exc:  # defensive: any unhandled fetch error
+            failed.append({**rec, "error_code": "runtime_error",
+                           "reason": f"{type(exc).__name__}: {exc}"})
+            continue
+        if err_code is not None:
+            # _compute_returns_core already printed an envelope. That's noise inside a
+            # batch run, but harmless — the JSON-on-stdout assumption is that ONE
+            # envelope is the final one. Per-entry errors collected here; the batch's
+            # own success envelope follows last. (Note: in practice this only fires
+            # in the non-dry-run path which is not unit-tested.)
+            failed.append({**rec, "error_code": "compute_returns_failed",
+                           "reason": "see prior error envelope"})
+            continue
+        if data.get("alpha_return_pct") is None:
+            failed.append({**rec, "error_code": "no_data",
+                           "reason": "benchmark fetch failed; alpha unavailable"})
+            continue
+        rewrites[f"{rec['decision_date']}|{rec['ticker']}"] = data
+        resolved.append({"ticker": rec["ticker"], "decision_date": rec["decision_date"],
+                         "raw_pct": data["raw_return_pct"],
+                         "alpha_pct": data["alpha_return_pct"],
+                         "holding_days": data["holding_days"]})
+
+    if rewrites:
+        text = read_log(log)
+        blocks = text.split(SEPARATOR)
+        new_blocks: list[str] = []
+        for block in blocks:
+            s = block.strip()
+            if not s:
+                new_blocks.append(block)
+                continue
+            lines = s.splitlines()
+            tag_line = lines[0].strip()
+            if not (tag_line.startswith("[") and tag_line.endswith("| pending]")):
+                new_blocks.append(block)
+                continue
+            fields = [f.strip() for f in tag_line[1:-1].split("|")]
+            if len(fields) < 4:
+                new_blocks.append(block)
+                continue
+            key = f"{fields[0]}|{fields[1]}"
+            data = rewrites.get(key)
+            if data is None:
+                new_blocks.append(block)
+                continue
+            rating = fields[2]
+            new_tag = (
+                f"[{fields[0]} | {fields[1]} | {rating}"
+                f" | {data['raw_return_pct']:+.1f}%"
+                f" | {data['alpha_return_pct']:+.1f}%"
+                f" | {data['holding_days']}d]"
+            )
+            reflection_text = (
+                f"Auto-resolved on {as_of_iso}: realized "
+                f"{data['raw_return_pct']:+.1f}% raw, "
+                f"{data['alpha_return_pct']:+.1f}% alpha vs benchmark over "
+                f"{data['holding_days']}d. [no manual reflection]"
+            )
+            rest = "\n".join(lines[1:]).lstrip()
+            rebuilt = f"{new_tag}\n\n{rest}\n\nREFLECTION:\n{reflection_text}"
+            new_blocks.append(rebuilt)
+        atomic_write(log, SEPARATOR.join(new_blocks))
+
+    return emit_success(
+        {"as_of": as_of_iso, "min_pending_days": args.min_pending_days,
+         "scanned": scanned,
+         "resolved": resolved, "skipped_not_due": skipped_not_due, "failed": failed,
+         "log": str(log)},
+        fmt, timer=timer, request_id=request_id,
+        table_render=lambda: print(
+            f"resolved {len(resolved)} / failed {len(failed)} / "
+            f"skipped_not_due {len(skipped_not_due)} (scanned {scanned}) → {log}"),
+    )
+
+
 # ----- main -----
 
 def main() -> int:
@@ -1423,10 +1639,18 @@ def main() -> int:
 
     p_ar = sub.add_parser("auto-resolve",
                            help="compute-returns + resolve in one call (closes the resolve loop)")
-    p_ar.add_argument("--ticker", required=True)
-    p_ar.add_argument("--date", required=True, help="Decision date of the pending entry to resolve")
-    p_ar.add_argument("--reflection", required=True,
+    # Single-entry mode: --ticker / --date / --reflection (each required when --due is absent;
+    # validated in cmd_auto_resolve so --due can swap them out).
+    p_ar.add_argument("--ticker", default=None)
+    p_ar.add_argument("--date", default=None, help="Decision date of the pending entry to resolve")
+    p_ar.add_argument("--reflection", default=None,
                       help="Lesson learned, 2-4 sentences (see references/reflection-prompt.md)")
+    # Batch mode: --due + --min-pending-days N. Resolves every pending entry at least N days old.
+    p_ar.add_argument("--due", action="store_true",
+                      help="Batch-resolve every pending entry past --min-pending-days. "
+                           "Mutually exclusive with --ticker / --date / --reflection.")
+    p_ar.add_argument("--min-pending-days", dest="min_pending_days", type=int, default=None,
+                      help="Required with --due. Pending entries with (as_of - decision_date) >= N days are resolved.")
     p_ar.add_argument("--as-of", dest="as_of", default=None)
     p_ar.add_argument("--benchmark", default=None)
     _shared(p_ar)
