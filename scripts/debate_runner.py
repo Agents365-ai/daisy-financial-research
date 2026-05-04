@@ -326,6 +326,105 @@ Be decisive. Reserve Hold for situations where the evidence on both sides is gen
 }
 
 
+# ---------------------------------------------------------------------------
+# Per-debate-type rotation rules
+# ---------------------------------------------------------------------------
+
+ROTATION = {
+    "research": ["Bull", "Bear"],          # length 2 -> bound = 2 * max_rounds
+    "risk":     ["Aggressive", "Conservative", "Neutral"],  # length 3 -> 3 * max_rounds
+}
+
+SYNTH_SPEAKER = {
+    "research": "ResearchManager",
+    "risk":     "PortfolioManager",
+}
+
+PROMPT_KEY_FOR_SPEAKER = {
+    "Bull": "research.bull",
+    "Bear": "research.bear",
+    "Aggressive": "risk.aggressive",
+    "Conservative": "risk.conservative",
+    "Neutral": "risk.neutral",
+    "ResearchManager": "research.synthesis",
+    "PortfolioManager": "risk.synthesis",
+}
+
+
+class _SafeDict(dict):
+    """str.format_map fallback for missing placeholders."""
+
+    def __missing__(self, key: str) -> str:
+        return "_(not provided)_"
+
+
+def _now_iso_z() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _now_compact() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _read_text_file(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _validate_init_args(args: argparse.Namespace):
+    """Return (exit_code, error_code, context) tuple on validation failure, else None."""
+    if not (1 <= args.max_rounds <= 5):
+        return ExitCode.VALIDATION, "max_rounds_out_of_range", {
+            "value": args.max_rounds, "allowed": "1..5",
+        }
+    if args.type == "research" and args.prior_synthesis_file:
+        return ExitCode.VALIDATION, "prior_synthesis_not_applicable", {
+            "reason": "research debates have no prior synthesis to reference",
+        }
+    if args.type == "risk" and not args.prior_synthesis_file:
+        return ExitCode.VALIDATION, "prior_synthesis_required", {
+            "reason": "every risk-layer prompt has {prior_synthesis}",
+        }
+    ctx_path = Path(args.context_file)
+    if not ctx_path.exists():
+        return ExitCode.VALIDATION, "context_file_missing", {"path": str(ctx_path)}
+    try:
+        ctx_text = _read_text_file(ctx_path)
+        ctx_obj = json.loads(ctx_text)
+    except json.JSONDecodeError as e:
+        return ExitCode.VALIDATION, "context_file_invalid_json", {
+            "path": str(ctx_path), "error": str(e),
+        }
+    if not isinstance(ctx_obj, dict):
+        return ExitCode.VALIDATION, "context_file_invalid_json", {
+            "path": str(ctx_path), "error": "top level must be a JSON object (mapping)",
+        }
+    if args.type == "risk":
+        ps_path = Path(args.prior_synthesis_file)
+        if not ps_path.exists():
+            return ExitCode.VALIDATION, "prior_synthesis_missing", {"path": str(ps_path)}
+    return None
+
+
+def _render_prompt(speaker: str, vars_: dict) -> str:
+    key = PROMPT_KEY_FOR_SPEAKER[speaker]
+    return _PROMPTS[key].format_map(_SafeDict(vars_))
+
+
+def _append_pad(pad: Path, record: dict):
+    """Append a single JSONL record. Returns None on success or an exit code on failure."""
+    try:
+        pad.parent.mkdir(parents=True, exist_ok=True)
+        with pad.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return None
+    except OSError:
+        return ExitCode.RUNTIME
+
+
 def _build_parser() -> argparse.ArgumentParser:
     epilog = (
         "Exit codes: 0 ok | 1 runtime | 2 auth (unused) | 3 validation | "
@@ -370,7 +469,76 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_init(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
-    raise NotImplementedError("Task 3")
+    err = _validate_init_args(args)
+    if err is not None:
+        exit_code, code, ctx = err
+        return emit_failure(exit_code, code.replace("_", " "), fmt,
+                            code=code, context=ctx, timer=timer)
+
+    ctx_path = Path(args.context_file)
+    ctx_text = _read_text_file(ctx_path)
+    ctx_obj = json.loads(ctx_text)
+
+    prior_text = None
+    prior_hash = None
+    if args.type == "risk":
+        prior_path = Path(args.prior_synthesis_file)
+        prior_text = _read_text_file(prior_path)
+        prior_hash = _sha256_text(prior_text)
+
+    debate_id = f"dbg_{_now_compact()}_{args.type}"
+
+    init_record = {
+        "ts": _now_iso_z(),
+        "type": "debate_init",
+        "debate_id": debate_id,
+        "debate_type": args.type,
+        "ticker": args.ticker,
+        "max_rounds": args.max_rounds,
+        "context_file_path": str(ctx_path.resolve()),
+        "context_file_sha256": _sha256_text(ctx_text),
+        "context_keys": sorted(ctx_obj.keys()),
+        "prior_synthesis_file_path": (
+            str(Path(args.prior_synthesis_file).resolve()) if args.prior_synthesis_file else None
+        ),
+        "prior_synthesis_sha256": prior_hash,
+    }
+
+    speaker = ROTATION[args.type][0]
+    vars_ = {**ctx_obj, "ticker": args.ticker}
+    if prior_text is not None:
+        vars_["prior_synthesis"] = prior_text
+    if args.type == "risk":
+        vars_.setdefault("conservative_response", "_(not yet spoken)_")
+        vars_.setdefault("neutral_response", "_(not yet spoken)_")
+
+    prompt = _render_prompt(speaker, vars_)
+
+    if args.dry_run:
+        return emit_success({
+            "debate_id": debate_id,
+            "next_action": "speak",
+            "speaker": speaker,
+            "round": 1,
+            "turn": 1,
+            "prompt": prompt,
+            "would_write": init_record,
+        }, fmt, timer=timer, meta_extra={"dry_run": True})
+
+    write_err = _append_pad(Path(args.pad), init_record)
+    if write_err is not None:
+        return emit_failure(write_err, "failed to append init record",
+                            fmt, code="pad_write_failed", retryable=True,
+                            context={"path": str(args.pad)}, timer=timer)
+
+    return emit_success({
+        "debate_id": debate_id,
+        "next_action": "speak",
+        "speaker": speaker,
+        "round": 1,
+        "turn": 1,
+        "prompt": prompt,
+    }, fmt, timer=timer)
 
 
 def _cmd_next(args: argparse.Namespace, fmt: str, timer: Timer) -> int:
