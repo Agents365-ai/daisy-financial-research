@@ -147,6 +147,19 @@ python <this-skill-dir>/scripts/dexter_memory_log.py compute-returns \
 # → JSON envelope with raw_return_pct / alpha_return_pct / benchmark_return_pct / holding_days
 ```
 
+To audit your own track record across many resolved entries, run `backtest`:
+
+```bash
+# Auto-derived window covering every resolved entry
+python <this-skill-dir>/scripts/dexter_memory_log.py backtest
+
+# Explicit window, Buy ratings only
+python <this-skill-dir>/scripts/dexter_memory_log.py backtest \
+  --from 20260101 --to 20260430 --rating Buy
+```
+
+Returns per-rating count / mean alpha / `alpha_hit_rate` / `alpha_t_stat` / `annualized_alpha_pct`, plus an overall block with the cumulative-alpha drawdown. The metric names make explicit that this is decision-level — daisy logs decisions, not a continuous portfolio NAV, so a textbook Sharpe ratio doesn't apply.
+
 When writing the `--reflection` text, follow the standard 2–4-sentence shape in `references/reflection-prompt.md` so lessons stay short enough to be re-injected on future runs.
 
 Storage: a single Markdown file at `./financial-research/memory/decision-log.md`. Entries are separated by the HTML comment `<!-- ENTRY_END -->`. Tag lines start as `[YYYY-MM-DD | ticker | rating | pending]` and become `[YYYY-MM-DD | ticker | rating | +X.X% | +Y.Y% | Nd]` on resolve. `record` is idempotent on (date, ticker) — re-running with the same key skips silently. Ratings are constrained to `Buy / Overweight / Hold / Underweight / Sell` (see `references/decision-schema.md` for the full rating vocabulary and report markdown contract). Use `dexter_memory_log.py stats` for a hit-rate / mean-alpha summary.

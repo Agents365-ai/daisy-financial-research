@@ -22,6 +22,7 @@ Subcommands
   list       structured listing with --status / --ticker / --since filters
   context    formatted past-context block for prompt injection at plan step
   stats      aggregate win-rate / mean-alpha / per-rating breakdown
+  backtest   risk-adjusted decision-level metrics across a date window
 
 Adapted from TradingAgents/tradingagents/agents/utils/memory.py — same on-disk
 format, exposed via the daisy agent-native CLI envelope (--format / --schema /
@@ -130,6 +131,35 @@ SCHEMA = {
                 "alpha_win_rate": "fraction with alpha_return > 0",
                 "mean_raw_return_pct": "float", "mean_alpha_return_pct": "float",
                 "by_rating": "dict",
+            },
+        },
+        "backtest": {
+            "description": (
+                "Risk-adjusted decision-level metrics across a date window. "
+                "Computes per-rating mean / hit-rate / t-stat on alpha plus an "
+                "annualized-alpha figure, Sortino-flavored ratio, and the max "
+                "drawdown of the cumulative-alpha curve. NOT a portfolio Sharpe "
+                "ratio — daisy logs decisions, not a continuous NAV. The metric "
+                "names make this explicit (alpha_t_stat, annualized_alpha_pct, "
+                "max_cum_alpha_drawdown_pct)."
+            ),
+            "params": {
+                "from_": {"type": "string", "format": "YYYY-MM-DD or YYYYMMDD",
+                           "description": "Window start; default = earliest resolved entry"},
+                "to": {"type": "string", "format": "YYYY-MM-DD or YYYYMMDD",
+                       "description": "Window end; default = latest resolved entry"},
+                "rating": {"type": "string", "enum": RATINGS,
+                           "description": "Optional filter to a single rating bucket"},
+                "log": {"type": "string"},
+                "out_dir": {"type": "string", "default": "./financial-research"},
+            },
+            "returns": {
+                "path": "log path",
+                "window": "{from, to, auto_derived}",
+                "n_resolved": "int",
+                "by_rating": "{Buy: {count, mean_raw_pct, raw_hit_rate, mean_alpha_pct, alpha_hit_rate, alpha_t_stat, mean_holding_days, annualized_alpha_pct}, ...}",
+                "overall": "same metric set across all included entries plus cumulative-alpha drawdown",
+                "cumulative_alpha_curve": "list of {date, cum_alpha_pct} sorted by date",
             },
         },
         "compute-returns": {
@@ -752,6 +782,202 @@ def cmd_stats(args, fmt, timer, request_id) -> int:
     return emit_success(data, fmt, timer=timer, request_id=request_id, table_render=table)
 
 
+# ----- backtest -----
+
+def _annualize_alpha(alpha_pct: float, holding_days: int) -> float | None:
+    """Linear-time annualization: alpha_pct * (365 / holding_days). Approximate
+    but appropriate for short horizons; geometric compounding is overkill at
+    typical 2-12 week holding periods."""
+    if holding_days is None or holding_days <= 0:
+        return None
+    return alpha_pct * (365.0 / float(holding_days))
+
+
+def _bucket_metrics(rows: list[dict]) -> dict[str, Any]:
+    """Compute the metric set for one rating bucket (or the overall pool).
+
+    rows is a list of dicts with at least raw_pct, alpha_pct, holding_days.
+    Missing values are dropped per metric, not per row. Returns an empty dict
+    when there's no usable data.
+    """
+    import math
+    if not rows:
+        return {"count": 0}
+
+    raws = [r["raw_pct"] for r in rows if r.get("raw_pct") is not None]
+    alphas = [r["alpha_pct"] for r in rows if r.get("alpha_pct") is not None]
+    holds = [r["holding_days"] for r in rows if r.get("holding_days")]
+    annualized = [
+        _annualize_alpha(r["alpha_pct"], r["holding_days"])
+        for r in rows
+        if r.get("alpha_pct") is not None and r.get("holding_days")
+    ]
+    annualized = [a for a in annualized if a is not None]
+
+    out: dict[str, Any] = {"count": len(rows)}
+    if raws:
+        out["mean_raw_pct"] = round(statistics.fmean(raws), 2)
+        out["raw_hit_rate"] = round(sum(1 for x in raws if x > 0) / len(raws), 3)
+    if alphas:
+        out["mean_alpha_pct"] = round(statistics.fmean(alphas), 2)
+        out["alpha_hit_rate"] = round(sum(1 for x in alphas if x > 0) / len(alphas), 3)
+        if len(alphas) >= 2:
+            sd = statistics.stdev(alphas)
+            if sd > 1e-9:
+                t_stat = statistics.fmean(alphas) / (sd / math.sqrt(len(alphas)))
+                out["alpha_t_stat"] = round(t_stat, 2)
+            else:
+                out["alpha_t_stat"] = None
+        else:
+            out["alpha_t_stat"] = None
+    if holds:
+        out["mean_holding_days"] = round(statistics.fmean(holds), 1)
+    if annualized:
+        out["annualized_alpha_pct"] = round(statistics.fmean(annualized), 2)
+        # Sortino-flavored: mean(annualized) / downside_dev where downside_dev =
+        # sqrt(mean(min(x, 0)^2)). Treats the risk-free rate as 0 (we already
+        # work in alpha space, not raw returns, so excess-vs-rf is double-counting).
+        downside_sq = [min(a, 0.0) ** 2 for a in annualized]
+        downside_dev = math.sqrt(sum(downside_sq) / len(downside_sq)) if downside_sq else 0.0
+        if downside_dev > 1e-9:
+            out["annualized_alpha_sortino_like"] = round(
+                statistics.fmean(annualized) / downside_dev, 2
+            )
+        else:
+            out["annualized_alpha_sortino_like"] = None
+    return out
+
+
+def cmd_backtest(args, fmt, timer, request_id) -> int:
+    log = resolve_log_path(args.log, args.out_dir)
+    entries = load_entries(log)
+
+    # Parse window flags
+    auto_derived_from = args.from_ is None
+    auto_derived_to = args.to is None
+    try:
+        from_iso = normalize_date(args.from_) if args.from_ else None
+        to_iso = normalize_date(args.to) if args.to else None
+    except ValueError as e:
+        return emit_failure(ExitCode.VALIDATION, str(e), fmt,
+                            code="validation_error", retryable=False,
+                            context={"value": args.from_ or args.to},
+                            timer=timer, request_id=request_id)
+
+    if from_iso and to_iso and from_iso > to_iso:
+        return emit_failure(ExitCode.VALIDATION,
+                            f"--from {from_iso} must be on or before --to {to_iso}",
+                            fmt, code="validation_error", retryable=False,
+                            context={"from": from_iso, "to": to_iso},
+                            timer=timer, request_id=request_id)
+
+    if args.rating and args.rating not in RATINGS:
+        return emit_failure(ExitCode.VALIDATION,
+                            f"unknown rating: {args.rating!r}",
+                            fmt, code="validation_error", retryable=False,
+                            context={"rating": args.rating, "valid": RATINGS},
+                            timer=timer, request_id=request_id)
+
+    resolved = [e for e in entries if not e["pending"]]
+
+    # Apply filters and parse numeric fields once.
+    rows: list[dict] = []
+    for e in resolved:
+        if from_iso and e["date"] < from_iso:
+            continue
+        if to_iso and e["date"] > to_iso:
+            continue
+        if args.rating and e["rating"] != args.rating:
+            continue
+        rows.append({
+            "date": e["date"],
+            "ticker": e["ticker"],
+            "rating": e["rating"],
+            "raw_pct": parse_pct(e["raw"]),
+            "alpha_pct": parse_pct(e["alpha"]),
+            "holding_days": parse_holding(e["holding"]),
+        })
+
+    if not rows:
+        return emit_failure(ExitCode.NO_DATA,
+                            "no resolved entries match the window/rating filter",
+                            fmt, code="no_data", retryable=False,
+                            context={"path": str(log),
+                                     "from": from_iso, "to": to_iso,
+                                     "rating": args.rating,
+                                     "total_resolved_in_log": len(resolved)},
+                            timer=timer, request_id=request_id)
+
+    rows.sort(key=lambda r: r["date"])
+
+    # Auto-derive window when not explicit
+    if auto_derived_from:
+        from_iso = rows[0]["date"]
+    if auto_derived_to:
+        to_iso = rows[-1]["date"]
+
+    # Per-rating buckets
+    by_rating: dict[str, list[dict]] = {}
+    for r in rows:
+        by_rating.setdefault(r["rating"], []).append(r)
+    by_rating_out = {rating: _bucket_metrics(rs) for rating, rs in by_rating.items()}
+
+    # Overall pool
+    overall = _bucket_metrics(rows)
+
+    # Cumulative-alpha curve and its drawdown
+    curve: list[dict] = []
+    running = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    max_dd_date: str | None = None
+    for r in rows:
+        a = r["alpha_pct"]
+        if a is None:
+            continue
+        running += a
+        peak = max(peak, running)
+        dd = running - peak  # <= 0
+        if dd < max_dd:
+            max_dd = dd
+            max_dd_date = r["date"]
+        curve.append({"date": r["date"], "cum_alpha_pct": round(running, 2)})
+
+    overall["max_cum_alpha_drawdown_pct"] = round(max_dd, 2) if max_dd < 0 else 0.0
+    overall["max_cum_alpha_drawdown_at"] = max_dd_date
+
+    data = {
+        "path": str(log),
+        "window": {"from": from_iso, "to": to_iso,
+                   "auto_derived_from": auto_derived_from,
+                   "auto_derived_to": auto_derived_to},
+        "rating_filter": args.rating,
+        "n_resolved": len(rows),
+        "by_rating": by_rating_out,
+        "overall": overall,
+        "cumulative_alpha_curve": curve,
+    }
+
+    def table() -> None:
+        print(f"path: {log}")
+        print(f"window: {from_iso} .. {to_iso}  (auto_from={auto_derived_from}, auto_to={auto_derived_to})")
+        if args.rating:
+            print(f"rating filter: {args.rating}")
+        print(f"n_resolved: {len(rows)}")
+        print("--- overall ---")
+        for k, v in overall.items():
+            print(f"  {k}: {v}")
+        print("--- by rating ---")
+        for rating, m in by_rating_out.items():
+            line = f"  {rating}: count={m.get('count')}"
+            for k in ("mean_alpha_pct", "alpha_hit_rate", "alpha_t_stat", "annualized_alpha_pct"):
+                if k in m:
+                    line += f"  {k}={m[k]}"
+            print(line)
+
+    return emit_success(data, fmt, timer=timer, request_id=request_id, table_render=table)
+
+
 # ----- compute-returns / auto-resolve -----
 
 def _compute_returns_core(args, fmt, timer, request_id):
@@ -1114,6 +1340,15 @@ def main() -> int:
     p_stats.add_argument("--since")
     _shared(p_stats)
 
+    p_bt = sub.add_parser("backtest",
+                           help="Risk-adjusted decision-level metrics across a window")
+    p_bt.add_argument("--from", dest="from_",
+                      help="Window start YYYY-MM-DD/YYYYMMDD; default = earliest resolved entry")
+    p_bt.add_argument("--to", help="Window end; default = latest resolved entry")
+    p_bt.add_argument("--rating", choices=RATINGS,
+                      help="Optional filter to a single rating bucket")
+    _shared(p_bt)
+
     p_cr = sub.add_parser("compute-returns",
                            help="Fetch close[decision]/close[as_of] + benchmark, compute raw + alpha (no log mutation)")
     p_cr.add_argument("--ticker", required=True)
@@ -1141,7 +1376,7 @@ def main() -> int:
         return emit_schema(SCHEMA, fmt, timer=timer)
 
     valid_subs = ["record", "resolve", "list", "context", "stats",
-                  "compute-returns", "auto-resolve"]
+                  "backtest", "compute-returns", "auto-resolve"]
     if not args.cmd:
         return emit_failure(
             ExitCode.VALIDATION,
@@ -1162,6 +1397,8 @@ def main() -> int:
             return cmd_context(args, fmt, timer, request_id)
         if args.cmd == "stats":
             return cmd_stats(args, fmt, timer, request_id)
+        if args.cmd == "backtest":
+            return cmd_backtest(args, fmt, timer, request_id)
         if args.cmd == "compute-returns":
             return cmd_compute_returns(args, fmt, timer, request_id)
         if args.cmd == "auto-resolve":
