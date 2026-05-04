@@ -35,8 +35,10 @@ This script does not require TUSHARE_TOKEN.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 from _envelope import (
@@ -51,12 +53,34 @@ from _envelope import (
 )
 
 
+HK_NAME_DICT_PATH = Path(__file__).resolve().parent.parent / "references" / "hk-ticker-name.json"
+_HK_NAME_CACHE: dict[str, str] | None = None
+
+
+def lookup_hk_name(code: str) -> str | None:
+    """Return Chinese short name for a 5-digit HK code, or None.
+
+    Lazy-loads references/hk-ticker-name.json on first call. Curated list
+    ported from TradingAgents-CN; not a complete HK universe — the goal is
+    to cover the major names that show up in research without requiring
+    an AKShare round-trip.
+    """
+    global _HK_NAME_CACHE
+    if _HK_NAME_CACHE is None:
+        try:
+            raw = json.loads(HK_NAME_DICT_PATH.read_text(encoding="utf-8"))
+            _HK_NAME_CACHE = {k: v for k, v in raw.items() if not k.startswith("_")}
+        except Exception:
+            _HK_NAME_CACHE = {}
+    return _HK_NAME_CACHE.get(code)
+
+
 SCHEMA = {
     "name": "akshare_hk_valuation",
     "description": "HK valuation + fundamentals fallback via AKShare (no Tushare token required)",
     "subcommands": {
         "valuation": {
-            "description": "Current PE/PB/PS snapshot + security profile",
+            "description": "Current PE/PB/PS snapshot + security profile (with local-dict name fallback)",
             "params": {
                 "ts_code": {"type": "string", "required": True,
                             "description": "Accepts '00005.HK' or '00005'"},
@@ -68,6 +92,7 @@ SCHEMA = {
                 "ps_ttm": "float or null", "pcf_ttm": "float or null",
                 "sector_rank_pe_ttm": "int or null",
                 "profile": "security profile dict",
+                "name_source": "akshare | local_dict | unknown",
                 "source": "akshare:stock_hk_valuation_comparison_em + stock_hk_security_profile_em",
             },
         },
@@ -85,10 +110,24 @@ SCHEMA = {
                 "source": "akshare:stock_financial_hk_analysis_indicator_em",
             },
         },
+        "name": {
+            "description": "Local-dict-only Chinese short name lookup (no API call)",
+            "params": {
+                "ts_code": {"type": "string", "required": True,
+                            "description": "Accepts '00005.HK' or '00005'"},
+            },
+            "returns": {
+                "ts_code": "normalized 5-digit", "name": "Chinese name or null",
+                "source": "local_dict (references/hk-ticker-name.json) | unknown",
+            },
+        },
     },
     "error_codes": ["validation_error", "no_data", "dependency_missing", "runtime_error"],
-    "deps": {"required": ["akshare"]},
+    "deps": {"required": ["akshare"], "name_subcommand": "no deps"},
     "auth": {"env_var": None},
+    "fallback_chain": {
+        "valuation_name": ["akshare row.简称", "references/hk-ticker-name.json", "''"],
+    },
 }
 
 
@@ -197,6 +236,14 @@ def cmd_valuation(args, fmt, timer, request_id) -> int:
 
     row = val_df.iloc[0]
     name = str(to_py(row.get("简称")) or "")
+    name_source = "akshare"
+    if not name:
+        local_name = lookup_hk_name(code)
+        if local_name:
+            name = local_name
+            name_source = "local_dict"
+        else:
+            name_source = "unknown"
 
     # Security profile is best-effort — failures don't fail the whole call.
     profile: dict[str, Any] = {}
@@ -228,6 +275,7 @@ def cmd_valuation(args, fmt, timer, request_id) -> int:
         "sector_rank_pe_ttm": coerce_int(row.get("市盈率-TTM排名")),
         "sector_rank_pb_mrq": coerce_int(row.get("市净率-MRQ排名")),
         "profile": profile,
+        "name_source": name_source,
         "source": "akshare:stock_hk_valuation_comparison_em + stock_hk_security_profile_em",
     }
 
@@ -332,6 +380,41 @@ def cmd_fundamentals(args, fmt, timer, request_id) -> int:
     return emit_success(data, fmt, timer=timer, request_id=request_id, table_render=table)
 
 
+def cmd_name(args, fmt, timer, request_id) -> int:
+    try:
+        code = normalize_hk_code(args.ts_code)
+    except ValueError as e:
+        return emit_failure(ExitCode.VALIDATION, str(e), fmt,
+                            code="validation_error", retryable=False,
+                            context={"value": args.ts_code},
+                            timer=timer, request_id=request_id)
+
+    if args.dry_run:
+        return emit_success(
+            {"dry_run": True, "would_call": "lookup_hk_name (local dict)",
+             "ts_code": code},
+            fmt, timer=timer, request_id=request_id,
+            table_render=lambda: print(f"would_call: lookup_hk_name({code!r})"),
+        )
+
+    name = lookup_hk_name(code)
+    if not name:
+        return emit_failure(ExitCode.NO_DATA,
+                            f"no local-dict entry for {code}",
+                            fmt, code="no_data", retryable=False,
+                            context={"ts_code": code,
+                                     "hint": "use the 'valuation' subcommand for an AKShare lookup, "
+                                             "or extend references/hk-ticker-name.json"},
+                            timer=timer, request_id=request_id)
+
+    data = {"ts_code": code, "name": name, "source": "local_dict"}
+
+    def table() -> None:
+        print(f"{code}: {name}  (local_dict)")
+
+    return emit_success(data, fmt, timer=timer, request_id=request_id, table_render=table)
+
+
 # ----- main -----
 
 def main() -> int:
@@ -353,6 +436,11 @@ def main() -> int:
     p_fund.add_argument("--limit", type=int, default=8)
     add_common_args(p_fund)
 
+    p_name = sub.add_parser("name", help="Local-dict-only Chinese name lookup (no API call)")
+    p_name.add_argument("--ts-code", dest="ts_code", required=True,
+                        help="HK ticker, e.g. 00005.HK or 00005")
+    add_common_args(p_name)
+
     args = p.parse_args()
     fmt = resolve_format(args.format)
     timer = Timer()
@@ -364,9 +452,9 @@ def main() -> int:
     if not args.cmd:
         return emit_failure(
             ExitCode.VALIDATION,
-            "missing subcommand: choose one of valuation / fundamentals",
+            "missing subcommand: choose one of valuation / fundamentals / name",
             fmt, code="validation_error", retryable=False,
-            context={"valid_subcommands": ["valuation", "fundamentals"]},
+            context={"valid_subcommands": ["valuation", "fundamentals", "name"]},
             timer=timer, request_id=request_id,
         )
 
@@ -375,6 +463,8 @@ def main() -> int:
             return cmd_valuation(args, fmt, timer, request_id)
         if args.cmd == "fundamentals":
             return cmd_fundamentals(args, fmt, timer, request_id)
+        if args.cmd == "name":
+            return cmd_name(args, fmt, timer, request_id)
     except Exception as e:
         return emit_failure(
             ExitCode.RUNTIME, f"{type(e).__name__}: {e}",

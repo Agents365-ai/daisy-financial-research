@@ -164,6 +164,8 @@ Write a 3–7 item plan. Keep it tactical:
 
 ### 3. Tool/data routing policy
 
+The canonical per-market routing reference (A-share / HK / US, primary + documented fallback chain for each data type) lives at `references/data-source-routing.md`. Read it before the plan step; the rest of this section is the agent-facing summary.
+
 For Chinese market / Tushare-accessible data:
 
 - Load/use the `tushare` skill if not already loaded.
@@ -192,6 +194,9 @@ python <this-skill-dir>/scripts/akshare_hk_valuation.py valuation --ts-code 0000
 
 # Annual or quarterly fundamentals: ROE_YEARLY, EPS_TTM, BPS, ROA, leverage
 python <this-skill-dir>/scripts/akshare_hk_valuation.py fundamentals --ts-code 00005.HK --period 年度 --limit 8
+
+# Local-dict-only Chinese name lookup (no API call) — covers ~30 HK majors
+python <this-skill-dir>/scripts/akshare_hk_valuation.py name --ts-code 00700.HK
 ```
 
 Sources: AKShare `stock_hk_valuation_comparison_em` + `stock_hk_security_profile_em` for valuation; `stock_financial_hk_analysis_indicator_em` for fundamentals. Optional `pip install akshare`; the helper emits `dependency_missing` (exit=5) with a clear install hint if the package is absent.
