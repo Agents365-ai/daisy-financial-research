@@ -13,3 +13,5 @@ tests/
 .pytest_cache/
 # Diagram source SVGs kept local-only; the rendered JPGs in assets/ are tracked
 assets/*.svg
+# Local-only research / migration notes (not part of the published skill)
+docs/migration-research-*.md
