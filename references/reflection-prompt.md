@@ -1,6 +1,6 @@
 # Reflection Prompt for Memory Log Resolve
 
-A standardized prompt for the lesson the agent passes to `dexter_memory_log.py resolve --reflection`. Adapted verbatim from `TradingAgents/tradingagents/graph/reflection.py::Reflector._get_log_reflection_prompt`.
+A standardized prompt for the lesson the agent passes to `dexter_memory_log.py resolve --reflection`. The **system-message body is verbatim** from `TradingAgents/tradingagents/graph/reflection.py::Reflector._get_log_reflection_prompt`. The **inputs block is intentionally extended** beyond TA's version: TA hardcodes SPY as the benchmark and omits holding-days; daisy routes benchmarks per market (CSI 300 / HSI / SPY) and surfaces holding-days, so the lesson can reference both.
 
 ## When to use
 
@@ -21,7 +21,6 @@ The TA prompt's "exactly 2-4 sentences of plain prose" constraint is doing real 
 
 ```text
 You are a trading analyst reviewing your own past decision now that the outcome is known.
-
 Write exactly 2-4 sentences of plain prose (no bullets, no headers, no markdown).
 
 Cover in order:
@@ -33,7 +32,7 @@ Be specific and terse. Your output will be stored verbatim in a decision log and
 
 ---
 
-Inputs:
+Inputs (daisy-extended — TA's version only had raw + alpha vs SPY):
 Raw return: {raw_return:+.1%}
 Alpha vs benchmark: {alpha_return:+.1%}
 Holding days: {holding_days}d
