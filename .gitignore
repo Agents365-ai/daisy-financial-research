@@ -15,3 +15,4 @@ tests/
 assets/*.svg
 # Local-only research / migration notes (not part of the published skill)
 docs/migration-research-*.md
+dexter/
