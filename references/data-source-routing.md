@@ -27,6 +27,7 @@ Adapted from `hsliuping/TradingAgents-CN:tradingagents/dataflows/providers/{chin
 | Index daily | `tushare.pro.index_daily` (`000300.SH`) | — | Used as benchmark for `dexter_memory_log` `auto-resolve`. |
 | Concept / ETF | `tushare.pro.concept` / `pro.fund_basic` | — | |
 | Technical indicators | `scripts/technical_indicators.py` (auto-routes via `pro.daily`) | — | SMA / MACD / RSI / Bollinger / ATR / VWMA via stockstats. |
+| Operating segments (主营构成) | `scripts/segments.py` (AKShare `stock_zygc_em`) | — | Rows by `分类类型`: 按产品 / 按地区 / 按行业. Free, no token. |
 | Screening | `scripts/screen_a_share.py` | — | Preset registry in `references/stock-screening-presets.md`. |
 | Web context | Brave MCP | Bailian WebSearch MCP | Use Bailian for China-only news / regulation. |
 
@@ -46,6 +47,7 @@ Adapted from `hsliuping/TradingAgents-CN:tradingagents/dataflows/providers/{chin
 | HSI benchmark | `tushare.pro.index_daily` | `tushare.pro.index_global` → `tushare.pro.hk_daily` → AKShare `stock_hk_index_daily_sina` | `dexter_memory_log auto-resolve` walks this chain automatically. |
 | Stock Connect screening | `scripts/screen_hk_connect.py` (only when 港股通 is explicitly requested) | — | |
 | Technical indicators | `scripts/technical_indicators.py` (auto-routes via `pro.hk_daily`) | — | |
+| Operating segments | (no free structured API) | `read_filings` / Brave MCP on the annual report's "Segment Information" note | `scripts/segments.py --ts-code <code>.HK` short-circuits to `no_data` (exit 4) with a `hint` pointing here. |
 | Web context | Brave MCP | Bailian WebSearch MCP | |
 
 **Auth:** `TUSHARE_TOKEN` for Tushare endpoints; AKShare needs no token. Missing token → `auth_missing` (exit 2) when the call is Tushare-only.
@@ -60,6 +62,7 @@ Adapted from `hsliuping/TradingAgents-CN:tradingagents/dataflows/providers/{chin
 | SPY benchmark | `yfinance.download('SPY')` | — | `dexter_memory_log auto-resolve` benchmark. |
 | Fundamentals | yfinance `Ticker(...).financials` (not currently used by daisy scripts) | — | If you need it, prefer pulling structured data from filings via Brave MCP search → SEC links. |
 | Technical indicators | `scripts/technical_indicators.py` | — | |
+| Operating segments | (no free structured API) | `read_filings` / Brave MCP on the latest 10-K Note "Segment Reporting" | `scripts/segments.py --ts-code AAPL` short-circuits to `no_data` (exit 4) with a `hint` pointing here. |
 | Web context | Brave MCP | (Bailian is China-tilted, less useful for US news) | |
 
 **Auth:** none for yfinance. yfinance is rate-limited; reuse cached data when possible.

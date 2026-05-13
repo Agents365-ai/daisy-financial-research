@@ -1,7 +1,38 @@
 # Analysis of virattt/dexter key points
 
 Source repo inspected: https://github.com/virattt/dexter.git
-Commit inspected: 0e5d805 (Update earnings tool)
+Commit inspected: `beb5f36` (Add LangSearch as web search provider; HEAD on 2026-05-13)
+Prior pin was `0e5d805` (Update earnings tool).
+
+## Delta since the prior pin — what was imported
+
+- **`segments.py`** — ports the idea of dexter's `getFinancialSegments` tool
+  (commit `8819ad7`) to a free-tier path: A-share via AKShare `stock_zygc_em`,
+  HK/US emit `no_data` with a pointer to filings. Different geography than
+  dexter (which is US-only via the paid Financial Datasets API), but the
+  segment-level analytical frame is now available to the agent.
+- **Broad-market news routing** — dexter's commit `745687e` taught the
+  `get_company_news` tool to take a `ticker?` (omit for macro). Equivalent
+  guidance is now in `SKILL.md` §3 as a Brave / Bailian MCP routing rule for
+  no-ticker macro queries; no script needed because the MCPs handle the
+  query directly.
+
+## Explicitly not imported (and why)
+
+- **LangSearch web-search provider** (commit `beb5f36`) — the skill commits
+  to Brave + Bailian MCPs (`SKILL.md` §3, "Search routing"). LangSearch is
+  redundant. Documented in routing notes only.
+- **Memory keyword-search fallback** (commit `a4c511a`) — daisy's memory log
+  is a single Markdown file with no embeddings, so there's no degradation
+  path to add.
+- **Research-rules prompt fix** (commit `aadaef1`) — daisy has no
+  `.dexter/RULES.md` concept; not applicable.
+- **CLI/UI commits** (cron z.union, model selector, flicker, duration
+  counter, disclaimer, approval flow) — runtime UX, not relevant to a
+  Python skill.
+- **DCF simplification — drop analyst-estimates step** (commit `4c355d4`) —
+  the current SKILL.md DCF section does not lean on analyst EPS estimates
+  as a hard input, so no edit was needed.
 
 ## What Dexter is
 

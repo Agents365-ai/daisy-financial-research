@@ -248,6 +248,9 @@ Routing heuristics adapted from Dexter:
 - Broad market or macro news → web search.
 - Screening by financial criteria → Tushare screening script or Python filtering.
 - DCF / fair value → follow the DCF checklist below.
+- **Revenue breakdown by product / region / segment** → A-share has a structured source (`scripts/segments.py` → AKShare `stock_zygc_em`); for HK / US there is no free segment API, so read the annual report's "Segment Information" note via filings / Brave search.
+
+When the user asks "why is the market down today" / "今天大盘为什么跌" / "what's moving the Hang Seng" — no specific ticker — go straight to broad web search (Brave MCP for English / global, Bailian MCP for Chinese-language sources) with a market-wide query like `美股下跌 原因 YYYY-MM-DD` or `S&P 500 selloff YYYY-MM-DD`. Do **not** pick one large-cap ticker and search its news as a proxy; the intent is macro / sector-rotation / rates / geopolitical catalysts, not a company event.
 
 ### 4. Soft loop limits
 
@@ -345,7 +348,17 @@ Recommended report sections:
 2. Company and ticker scope.
 3. Data sources and dates.
 4. Price and valuation snapshot. When the report needs a technical-analysis layer, pick up to 8 complementary indicators from `references/technical-indicator-cheatsheet.md` and compute them via `scripts/technical_indicators.py --ts-code <code>` (auto-routes A-share/HK/US, applies a strict look-ahead-bias guard at `--as-of`). Skip TA entirely for banks / insurers — RoTE / CET1 / NIM are the right frame for those.
-5. Financial performance and key drivers.
+5. Financial performance and key drivers. For A-share names, pulling a revenue-by-segment / 主营构成 breakdown often surfaces concentration risk (one product line / one region) that the headline P&L hides:
+
+   ```bash
+   # All classifications (按产品 / 按地区 / 按行业), 4 most recent reports
+   python <this-skill-dir>/scripts/segments.py --ts-code 600519.SH
+
+   # Filter to one axis
+   python <this-skill-dir>/scripts/segments.py --ts-code 000001.SZ --classification 按地区
+   ```
+
+   HK / US names: no free segment API — read the latest annual report's "Segment Information" note (10-K for US, annual report "Operating Segments" section for HK) via the filings tool or Brave search.
 6. News/catalyst review. For A-share / 港股 names, pull China-market context (涨跌停 risk, 北向资金, 板块 rotation, 监管 backdrop) using the system prompt in `references/cn-market-analyst-prompts.md`.
 7. Bull/base/bear scenarios. For balanced single-company research, run the three-prompt debate template in `references/debate-prompts.md` (Bull → Bear → Synthesis) instead of writing scenarios free-form. The synthesis output's 5-tier rating maps directly onto `dexter_memory_log.py record --rating`. For position-sizing follow-up after the directional rating is set, optionally run `references/risk-debate-prompts.md` (Aggressive → Conservative → Neutral → Portfolio Manager). All synthesis outputs use the markdown shape and rating vocabulary documented in `references/decision-schema.md`. Either loop can be driven mechanically by `scripts/debate_runner.py` (subcommands `init` / `next` / `synthesize`, `--type research|risk`) — the script enforces the rotation rules and exit conditions so the agent only has to write each speaker's argument; full usage in the "Programmatic loop driver" sections of the two prompt files.
 8. Risks and what would change the view.
