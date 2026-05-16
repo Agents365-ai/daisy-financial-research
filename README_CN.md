@@ -16,7 +16,7 @@
 
 - **`reports/<时间戳>_<slug>.{md,html,pdf}`** —— 带来源引用的研究报告 (Markdown 源 + 浏览器即开即看的 HTML + 可选 PDF，CSS 已处理中英文字体回退)
 - **`watchlists/<时间戳>_<preset>.{csv,json}`** —— 多因子筛选输出：股息质量、价值、成长、动量、港股通等
-- **`scratchpad/<时间戳>.jsonl`** —— 这次任务里 agent 调用的每一个工具、参数、原始结果、假设。**可重放**
+- **`scratchpad/<时间戳>.jsonl`** —— 这次任务里 agent 调用的每一个工具、参数、原始结果、假设。**可重复**
 - **`memory/decision-log.md`** —— 跨会话的追加式决策日志，每一笔 Buy / Overweight / Hold / Underweight / Sell 评级都有 `pending → resolved` 生命周期，每个 closed 条目带 2-4 句话的反思
 - **`universes/<日期>_hk-connect-universe.csv`** —— 南向港股通 universe 快照
 
